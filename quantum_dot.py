@@ -109,98 +109,95 @@ class _SymmetryOperate:
         #return coords_str0, coords_str1, inds_end
         return inds_end
 
-    def rotate_Cms(self, m=3):
+    @staticmethod
+    def _inds_pairs(coords_0, coords_1_list):
+        inds_all = []
+        n_op = len(coords_1_list)
+        for i in range(n_op):
+            coords_1 = coords_1_list[i]
+            inds = _SymmetryOperate._inds_pair(coords_0, coords_1)
+            inds_all.append(inds)
+        return inds_all
+
+    def _coords(self, coords):
+        if coords is None:
+            coords = copy.deepcopy(self.coords)
+        else:
+            coords = copy.deepcopy(coords)
+        return coords
+
+    def Cns(self, coords=None):
         """
         Description: m-fold rotation (main axis along z-axis) axis
         operators are C_m^n for n in range(m) 
         m = 3 (triangle) and 6 (hexegon)
         """
-        pairs = []
-        for n in range(1, m):
-            theta = 360/m*n
-            coords_0 = copy.deepcopy(self.coords)
+        n = self.nfold
+        coords_0 = self._coords(coords)
+        coords_end = []
+        for i in range(1, n):
+            theta = 360/n*i
             coords_1 = rotate_on_vec(theta, coords_0)
-            pairs_n = _SymmetryOperate._inds_pair(coords_0, coords_1)
-            pairs.append(pairs_n)
-        return np.array(pairs)
+            coords_end.append(coords_1)
+        return np.array(coords_end)
 
-    def rotate_C2s_D2(self):
+    def sigma_h(self, coords=None):
+        y0 = self.h/2
+        coords_0 = self._coords(coords)
+        coords_0[:,2] = -( coords_0[:,2] - y0 ) + y0
+        return coords_0
+
+    def _get_vertical_mirrors(self, p0):
         """
-        three C2 rotations with rotation axes in xy plane and 120 degree orientations seperated
-        axis_orient: the angle with x-axis of one 2-fold rotation axis
-        Note: For bottom 
+        p0: the point one one axis
+        return：
+            all mirrors indicated by lines 
         """
-        def get_mirrors(twist_angle):
-            p_orig = self.latt_bottom[0]+self.latt_bottom[1]
-            theta0 = twist_angle/2 
-            theta1 = twist_angle/2 + 90
-            p0 = rotate_on_vec(theta0, p_orig)
-            p1 = rotate_on_vec(theta1, p_orig)
-            orig = np.array([0., 0.])
-            m0 = get_line_through_two_points(orig, p0)
-            m1 = get_line_through_two_points(orig, p1)
-            return m0, m1
+        orig = np.array([0., 0.])
+        theta = 180/self.nfold
+        ms = []
+        for i in range(self.nfold):
+            theta_i = theta*i
+            p_i = rotate_on_vec(theta_i, p0)
+            m_i = get_line_through_two_points(orig, p_i)
+            ms.append(m_i)
+        return ms
 
-        if len(self.layer_nsites)==2:# the case for twist bilayer QD
-            m0, m1 = get_mirrors(self.twist_angle)
-            zs = np.array([self.h]*self.layer_nsites[1] + [0.]*self.layer_nsites[0])
-        elif len(self.layer_nsites)==1: # the case for graphene QD
-            m0, m1 = get_mirrors(0.)
-            zs = np.array([0.]*self.layer_nsites[0])
-        
-        def inds_after_mirror(m):
-            coords_mirror = mirror_operate_2d(m, self.coords)
-            coords_mirror = np.append(coords_mirror, zs.reshape(-1,1), axis=1)    
-            return _SymmetryOperate._inds_pair(self.coords, coords_mirror)
 
-        return np.array([inds_after_mirror(m0), inds_after_mirror(m1)])
+    def sigma_vs(self, coords=None):
+        coords_0 = self._coords(coords)
 
-    def rotate_C2s_D3(self):
-        return self._rotate_three_C2s(axis=self.orient)
+        zs = coords_0[:,2]
+        if self.nfold == 2:
+            axis0_bott = [1, 0]
+        elif self.nfold in [3, 6, 12]:
+            axis0_bott = self._p0_unrott(self.orient, 1)
+        axis0 = rotate_on_vec(self.twist_angle, axis0_bott)    
+        ms = self._get_vertical_mirrors(axis0)
+        coords_end = []
+        for m in ms:
+            coords_m = mirror_operate_2d(m, coords_0)
+            coords_m = np.append(coords_m, zs.reshape(-1,1), axis=1)    
+            coords_end.append(coords_m)
+        return coords_end
 
-    def rotate_C2s_D6(self):
-        inds0 = self._rotate_three_C2s(axis='armchair')
-        inds1 = self._rotate_three_C2s(axis='zigzag')
-        return np.append(inds0, inds1, axis=0)
-
-    def _rotate_three_C2s(self, axis='armchair'):
+    def Sns(self, coords=None):
         """
-        three C2 rotations with rotation axes in xy plane and 120 degree orientations seperated
-        axis_orient: the angle with x-axis of one 2-fold rotation axis
-        Note: For bottom 
+        Sns = Cns * sigma_h
         """
-        if axis == 'armchair':
-            axis_orient = 0.
-        elif axis == 'zigzag':
-            axis_orient = 30.
-        def get_mirrors(twist_angle):
-            p_orig = self.latt_bottom[0]+self.latt_bottom[1]
-            theta0 = twist_angle/2 + axis_orient
-            theta1 = twist_angle/2 + 120. + axis_orient
-            theta2 = twist_angle/2 + 240. + axis_orient
-            p0 = rotate_on_vec(theta0, p_orig)
-            p1 = rotate_on_vec(theta1, p_orig)
-            p2 = rotate_on_vec(theta2, p_orig)
-            orig = np.array([0., 0.])
-            m0 = get_line_through_two_points(orig, p0)
-            m1 = get_line_through_two_points(orig, p1)
-            m2 = get_line_through_two_points(orig, p2)
-            return m0, m1, m2
+        coords_0 = self._coords(coords)
+        coords_Cns = self.Cns(coords_0)
+        coords_Cns_sigma_h = [self.sigma_h(coords) for coords in coords_Cns]
+        return np.array(coords_Cns_sigma_h)
 
-        if len(self.layer_nsites)==2:# the case for twist bilayer QD
-            m0, m1, m2 = get_mirrors(self.twist_angle)
-            zs = np.array([self.h]*self.layer_nsites[1] + [0.]*self.layer_nsites[0])
-        elif len(self.layer_nsites)==1: # the case for graphene QD
-            m0, m1, m2 = get_mirrors(0.)
-            zs = np.array([0.]*self.layer_nsites[0])
-        
-        def inds_after_mirror(m):
-            coords_mirror = mirror_operate_2d(m, self.coords)
-            coords_mirror = np.append(coords_mirror, zs.reshape(-1,1), axis=1)    
-            return _SymmetryOperate._inds_pair(self.coords, coords_mirror)
-
-        return np.array([inds_after_mirror(m0), inds_after_mirror(m1), inds_after_mirror(m2)])
-        
+    def C2s(self, coords=None):
+        """
+        C2s = sigma_h * sigma_v
+        """
+        coords_0 = self._coords(coords)
+        coords_sigma_v = self.sigma_vs(coords_0)
+        coords_sigma_v_sigma_h = [self.sigma_h(coords) for coords in coords_sigma_v]
+        return np.array(coords_sigma_v_sigma_h)
 
 class _GemetryOperate:
     def get_layer_nsites(self):
@@ -240,6 +237,7 @@ class QuantumDot(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate):
         self.twist_angle = twist_angle
 
     def rectangle(self, w, h, twist_angle, overlap='side_center', rm_single_bond=True):
+        self.nfold = 2
         R = np.sqrt(w**2/4+h**2/4)
         self.round_disk(R+2, twist_angle, overlap=overlap) 
         x0 = w/2*self.a
@@ -267,6 +265,13 @@ class QuantumDot(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate):
         self.layer_nsites = self.get_layer_nsites()
         if rm_single_bond:
             self._remove_single_bonds()
+
+    def _p0_unrott(self, orient, R):
+        if orient == 'armchair':
+            p0_unrott = R/np.sqrt(3)*(self.latt_bottom[0]+self.latt_bottom[1])
+        elif orient == 'zigzag':
+            p0_unrott = self.latt_bottom[0]*R
+        return p0_unrott
         
     def regular_polygon(self, n, R, twist_angle, overlap='hole', rm_single_bond=True, orient='armchair'):
         """
@@ -276,15 +281,11 @@ class QuantumDot(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate):
         rm_single_bond: whether the atom with only one negibors are removed
         """
         self.round_disk(R+2, twist_angle, overlap=overlap)
-
+        self.nfold = n
         #R = self.a*R
         theta = 360/n
         self.orient = orient
-        if orient == 'armchair':
-            p0_unrott = R/np.sqrt(3)*(self.latt_bottom[0]+self.latt_bottom[1])
-        elif orient == 'zigzag':
-            p0_unrott = self.latt_bottom[0]*R
-            
+        p0_unrott = self._p0_unrott(orient, R) 
         p1_unrott = rotate_on_vec(theta, p0_unrott)
         line0 = get_line_through_two_points(p0_unrott, p1_unrott)
         a1, b1, c1 = line0
