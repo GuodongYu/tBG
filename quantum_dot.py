@@ -117,7 +117,19 @@ class _SymmetryOperate:
             coords_1 = coords_1_list[i]
             inds = _SymmetryOperate._inds_pair(coords_0, coords_1)
             inds_all.append(inds)
-        return inds_all
+        return np.array(inds_all)
+
+    def symmetry_operations(self):
+        ops = {}
+        ops['Cns'] = self.Cns()
+        ops['C2s'] = self.C2s()
+        pg = self.get_point_group()
+        if pg in ['D2h', 'D3h', 'D6h']:
+            ops['sigma_vs'] = self.sigma_vs()
+            ops['Sns'] = self.Sns()
+            ops['sigma_h'] = [self.sigma_h()]
+        ops_inds = {i:self._inds_pairs(self.coords, ops[i]) for i in ops}
+        return ops_inds
 
     def _coords(self, coords):
         if coords is None:
@@ -128,9 +140,8 @@ class _SymmetryOperate:
 
     def Cns(self, coords=None):
         """
-        Description: m-fold rotation (main axis along z-axis) axis
+        Description: all rotations related to n-fold principal axis
         operators are C_m^n for n in range(m) 
-        m = 3 (triangle) and 6 (hexegon)
         """
         n = self.nfold
         coords_0 = self._coords(coords)
@@ -228,12 +239,9 @@ class QuantumDot(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate):
         self.a = a
         self.h = h
 
-    def _system_rotate(self, theta):
-        pass
-
-    def round_disk(self, R, twist_angle, overlap='hole'):
+    def round_disk(self, R, twist_angle, overlap='hole', rm_single_bond=False):
         self.make_structure(R, rotation_angle=twist_angle, a=self.a, h=self.h, \
-                                  overlap=overlap, rm_dangling=False)
+                                  overlap=overlap, rm_dangling=rm_single_bond)
         self.twist_angle = twist_angle
 
     def rectangle(self, w, h, twist_angle, overlap='side_center', rm_single_bond=True):
@@ -267,6 +275,10 @@ class QuantumDot(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate):
             self._remove_single_bonds()
 
     def _p0_unrott(self, orient, R):
+        """
+        get the coordinate of one vertex of the bottom layer
+        R: in units of a
+        """
         if orient == 'armchair':
             p0_unrott = R/np.sqrt(3)*(self.latt_bottom[0]+self.latt_bottom[1])
         elif orient == 'zigzag':
@@ -280,17 +292,20 @@ class QuantumDot(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate):
         twist_angle: the twist angle between two layers
         rm_single_bond: whether the atom with only one negibors are removed
         """
+        if n not in [3, 6, 12]:
+            print('Warnning: n != 3, 6, or 12, only structure is reasonable!!')
         self.round_disk(R+2, twist_angle, overlap=overlap)
         self.nfold = n
         #R = self.a*R
         theta = 360/n
         self.orient = orient
-        p0_unrott = self._p0_unrott(orient, R) 
-        p1_unrott = rotate_on_vec(theta, p0_unrott)
+        p0_unrott = self._p0_unrott(orient, R) # coord of one vertex of bottom layer
+        p1_unrott = rotate_on_vec(theta, p0_unrott) # coord another vertex of bottm layer
         line0 = get_line_through_two_points(p0_unrott, p1_unrott)
         a1, b1, c1 = line0
 
         ############################################################
+        ## p is coordinate of one vertex of the regular polygon
         if self.twist_angle == 0.0:
             p = p0_unrott
         else:
@@ -324,6 +339,18 @@ class QuantumDot(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate):
         self.layer_nsites = self.get_layer_nsites()
         if rm_single_bond:
             self._remove_single_bonds()
+
+    def get_point_group(self):
+        if self.twist_angle == 0.0:
+            if self.nfold in [2, 3, 6]:
+                return 'D%sh' % self.nfold
+            elif self.nfold == 12:
+                return 'D6h'
+        else:
+            if self.nfold in [2, 3, 6]:
+                return 'D%s' % self.nfold
+            elif self.nfold == 12:
+                return 'D6'
 
     def _remove_single_bonds(self):
 
