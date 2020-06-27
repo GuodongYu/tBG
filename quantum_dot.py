@@ -174,17 +174,33 @@ class _SymmetryOperate:
             ms.append(m_i)
         return ms
 
-
-    def sigma_vs(self, coords=None):
-        coords_0 = self._coords(coords)
+    def _get_all_vertical_mirrors(self):
+        coords_0 = self._coords(None)
 
         zs = coords_0[:,2]
         if self.nfold == 2:
             axis0_bott = [1, 0]
         elif self.nfold in [3, 6, 12]:
             axis0_bott = self._p0_unrott(self.orient, 1)
-        axis0 = rotate_on_vec(self.twist_angle, axis0_bott)    
+        axis0 = rotate_on_vec(self.twist_angle/2, axis0_bott)    
         ms = self._get_vertical_mirrors(axis0)
+        return ms
+
+    def _plot_C2_axes(self, fig, ax):
+        self.plot(fig, ax, site_size=3.0, dpi=600, lw=0.6, edge_cut=0)
+        ms = self._get_all_vertical_mirrors()
+        R = np.max(np.linalg.norm(self.coords[:,0:2], axis=1))
+        for m in ms:
+            a, b, c = m
+            if a == 0:
+                p = np.array([0,1])*R
+            else:
+                p = np.array([-b/a, 1])
+                p = p/np.linalg.norm(p)*R
+            ax.plot([-p[0],p[0]],[-p[1],p[1]], color='blue', ls='dashed')
+
+    def sigma_vs(self, coords=None):
+        ms = self._get_all_vertical_mirrors()
         coords_end = []
         for m in ms:
             coords_m = mirror_operate_2d(m, coords_0)
