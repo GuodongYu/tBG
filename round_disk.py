@@ -109,9 +109,15 @@ class Structure(_Methods):
         elif overlap == 'atom':
             self.site0 = np.array([0., 0.])
             self.site1 = np.array([1./3., 1./3.])
+        elif overlap == 'atom1':
+            self.site0 = np.array([-1/3, -1/3])
+            self.site1 = np.array([0., 0.])
         elif overlap == 'side_center':
             self.site0 = np.array([-1/6., -1/6.])
             self.site1 = np.array([1./6., 1./6.])
+        else:
+            raise ValueError('overlap %s can not be recognized!!' % overlap)
+         
             
 
         self.radius = R*a
@@ -560,7 +566,7 @@ class Structure(_Methods):
         plt.savefig(fname+'.pdf')
         plt.clf()
 
-    def plot(self, fname='BiGraphene.pdf',site_size=3.0, draw_dpi=600, lw=0.6, edge_cut=None):
+    def plot(self, fname='BiGraphene.pdf',site_size=3.0, dpi=600, lw=0.6, edge_cut=None):
         import matplotlib.pyplot as plt
         import matplotlib.collections as mc
         fig, ax = plt.subplots()
@@ -598,7 +604,7 @@ class Structure(_Methods):
         plt.axis('equal')
         plt.axis('off')
         #plt.draw()
-        plt.savefig(fname, bbox_inches='tight', draw_dpi=draw_dpi)
+        plt.savefig(fname, bbox_inches='tight', dpi=dpi)
         plt.close()
 
 ################# below for tipsi sample ###########
