@@ -158,49 +158,11 @@ class _SymmetryOperate:
         coords_0[:,2] = -( coords_0[:,2] - y0 ) + y0
         return coords_0
 
-    def _get_vertical_mirrors(self, p0):
-        """
-        p0: the point one one axis
-        return：
-            all mirrors indicated by lines 
-        """
-        orig = np.array([0., 0.])
-        theta = 180/self.nfold
-        ms = []
-        for i in range(self.nfold):
-            theta_i = theta*i
-            p_i = rotate_on_vec(theta_i, p0)
-            m_i = get_line_through_two_points(orig, p_i)
-            ms.append(m_i)
-        return ms
-
-    def _get_all_vertical_mirrors(self):
-        coords_0 = self._coords(None)
-
-        zs = coords_0[:,2]
-        if self.nfold == 2:
-            axis0_bott = [1, 0]
-        elif self.nfold in [3, 6, 12]:
-            axis0_bott = self._p0_unrott(self.orient, 1)
-        axis0 = rotate_on_vec(self.twist_angle/2, axis0_bott)    
-        ms = self._get_vertical_mirrors(axis0)
-        return ms
-
-    def _plot_C2_axes(self, fig, ax):
-        self.plot(fig, ax, site_size=3.0, dpi=600, lw=0.6, edge_cut=0)
-        ms = self._get_all_vertical_mirrors()
-        R = np.max(np.linalg.norm(self.coords[:,0:2], axis=1))
-        for m in ms:
-            a, b, c = m
-            if a == 0:
-                p = np.array([0,1])*R
-            else:
-                p = np.array([-b/a, 1])
-                p = p/np.linalg.norm(p)*R
-            ax.plot([-p[0],p[0]],[-p[1],p[1]], color='blue', ls='dashed')
-
     def sigma_vs(self, coords=None):
-        ms = self._get_all_vertical_mirrors()
+        coords_0 = self._coords(None)
+        zs = coords_0[:,2]
+        axes = self.all_C2_axes(self.orient)
+        ms = [get_line_through_two_points([0,0], axis) for axis in axes]
         coords_end = []
         for m in ms:
             coords_m = mirror_operate_2d(m, coords_0)
@@ -263,43 +225,69 @@ class QuantumDot(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate):
     def rectangle(self, w, h, twist_angle, overlap='side_center', rm_single_bond=True):
         self.nfold = 2
         R = np.sqrt(w**2/4+h**2/4)
-        self.round_disk(R+2, twist_angle, overlap=overlap) 
-        x0 = w/2*self.a
-        y0 = h/2*self.a
-        p0_unrott = [x0, y0]
-        p1_unrott = [-x0, y0]
-        p2_unrott = [-x0, -y0]
-        p3_unrott = [x0, -y0]
-        ps_unrott = np.array([p0_unrott, p1_unrott, p2_unrott, p3_unrott])
-        if twist_angle==0.:
-            verts = ps_unrott
-        else:
-            ps_rott = rotate_on_vec(twist_angle, ps_unrott)
-            lines0 = [get_line_through_two_points(ps_unrott[i%4], ps_unrott[(i+1)%4]) for i in range(4)]
-            lines1 = [get_line_through_two_points(ps_rott[i-1], ps_rott[i]) for i in range(4)]
-            verts = np.array([get_interaction_two_lines(lines0[i], lines1[i]) for i in range(4)])
-        lines = [get_line_through_two_points(verts[i], verts[(i+1)%4]) for i in range(4)]
+        self.round_disk(R+2, twist_angle, overlap=overlap)
+        self.orient = 'armchair'
+        ## get vertices of rectangle
+        axes = self.all_C2_axes('armchair')
+        p_m0 = (w/2+1.e-3)*self.a*axes[0]
+        p_m1 = (h/2+1.e-3)*self.a*axes[1]
+        vert0 = p_m0 + p_m1
+        vert1 = -p_m0 + p_m1
+        vert2 = -p_m0 - p_m1
+        vert3 = p_m0 - p_m1
+        vertices = np.array([vert0, vert1, vert2, vert3])
+        ## get all sides
+        sides = QuantumDot.get_sides_from_vertices(vertices)
+        # get atoms inside polygon 
+        self.coords = QuantumDot.get_atoms_inside_polygon(self.coords, sides)
 
-        inds = site_inds_relative_a_line_including_specific_pnt(self.coords, lines[0], np.array([0,0]))
-        for i in range(1, len(lines)):
-            line = lines[i]
-            inds_tmp = site_inds_relative_a_line_including_specific_pnt(self.coords, line, np.array([0,0]))
-            inds = np.intersect1d(inds, inds_tmp) 
-        self.coords = self.coords[inds]       
         self.layer_nsites = self.get_layer_nsites()
         if rm_single_bond:
             self._remove_single_bonds()
 
-    def _p0_unrott(self, orient, R):
+    def _C2_1st_axis(self, orient):
         """
-        get the coordinate of one vertex of the bottom layer
-        R: in units of a
+        get vector of the 1st 2-fold axis 
         """
         if orient == 'armchair':
-            p0_unrott = R/np.sqrt(3)*(self.latt_bottom[0]+self.latt_bottom[1])
+            vec = self.latt_bottom[0]+self.latt_bottom[1]
         elif orient == 'zigzag':
-            p0_unrott = self.latt_bottom[0]*R
-        return p0_unrott
+            vec = self.latt_bottom[0]
+        vec = vec/np.linalg.norm(vec)
+        return rotate_on_vec(self.twist_angle/2, vec)
+
+    def all_C2_axes(self, orient_1st):
+        """
+        orient_1st: the orient of the 1st 2-fold axis 'armchair or zigzag'
+        """
+        axis0 = self._C2_1st_axis(orient_1st)
+        axes = []
+        for i in range(self.nfold):
+            axis_i = rotate_on_vec(180/self.nfold*i, axis0)
+            axes.append(axis_i)
+        return np.array(axes)
+
+    @staticmethod
+    def get_sides_from_vertices(vertices):
+        sides = []
+        for i in range(-1, len(vertices)-1):
+            side_i = get_line_through_two_points(vertices[i], vertices[i+1])
+            sides.append(side_i)
+        return sides
+
+    @staticmethod
+    def get_atoms_inside_polygon(coords, sides):
+        """
+        coords: atoms' coordinates for handling
+        sides: all sides of the polygon
+        """
+        inds = site_inds_relative_a_line_including_specific_pnt(coords, sides[0], np.array([0,0]))
+        for i in range(1, len(sides)):
+            side = sides[i]
+            inds_tmp = site_inds_relative_a_line_including_specific_pnt(coords, side, np.array([0,0]))
+            inds = np.intersect1d(inds, inds_tmp) 
+        return coords[inds]      
+
         
     def regular_polygon(self, n, R, twist_angle, overlap='hole', rm_single_bond=True, orient='armchair'):
         """
@@ -308,50 +296,51 @@ class QuantumDot(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate):
         twist_angle: the twist angle between two layers
         rm_single_bond: whether the atom with only one negibors are removed
         """
+        if overlap not in ['atom', 'hole', 'atom1']:
+            raise ValueError('Overlap %s is not recogenized!' % overlap)
+
+        if orient not in ['armchair', 'zigzag']:
+            raise ValueError('Oriention %s is not recogenized!' % orient)
+        
+        ## Four following lines make sure the highest symmetry
+        if n==3 and orient=='zigzag' and overlap!='hole':
+            raise ValueError('For Triangle and zigzag orientation, overlap can only be hole!')
+
+        if n in [6,12] and overlap!='hole':
+            raise ValueError('For Hexgon or Decagon, overlap can only be hole!')
+
         if n not in [3, 6, 12]:
             print('Warnning: n != 3, 6, or 12, only structure is reasonable!!')
+
         self.round_disk(R+2, twist_angle, overlap=overlap)
         self.nfold = n
-        #R = self.a*R
-        theta = 360/n
         self.orient = orient
-        p0_unrott = self._p0_unrott(orient, R) # coord of one vertex of bottom layer
-        p1_unrott = rotate_on_vec(theta, p0_unrott) # coord another vertex of bottm layer
-        line0 = get_line_through_two_points(p0_unrott, p1_unrott)
-        a1, b1, c1 = line0
 
-        ############################################################
-        ## p is coordinate of one vertex of the regular polygon
-        if self.twist_angle == 0.0:
-            p = p0_unrott
-        else:
-            p0_rott = rotate_on_vec(twist_angle, p0_unrott)
+        ### get new R to include sites of both layers at R
+        theta_inter = (n-2)*180/n
+        def d2r(degree):
+            return degree*np.pi/180
+        theta_1 = d2r(theta_inter/2)
+        theta_2 = d2r(twist_angle/2)
+        #R_new = R/np.sin(theta_1)*np.sin(np.pi-theta_1-theta_2) + 1.e-5
+        R_new = R + 1.e-5
 
-            p1_rott_CCW = rotate_on_vec(theta, p0_rott)
-            line1_CCW = get_line_through_two_points(p0_rott, p1_rott_CCW)
-            a2_CCW, b2_CCW, c2_CCW = line1_CCW
-            p0_intsec = get_interaction_two_lines([a1,b1,c1], [a2_CCW,b2_CCW,c2_CCW])
+        # profile of regular polygon with n sides
+        def _vertices(R):
+            axis_C2_1st = self._C2_1st_axis(orient)
+            vert0 = R*axis_C2_1st*self.a
+            vertices = []
+            for i in range(self.nfold):
+                theta_i = 360/self.nfold*i
+                vertices.append(rotate_on_vec(theta_i, vert0))
+            return vertices
 
-            p1_rott_CW = rotate_on_vec(-theta, p0_rott)
-            line1_CW = get_line_through_two_points(p0_rott, p1_rott_CW)
-            a2_CW, b2_CW, c2_CW = line1_CW
-            p1_intsec = get_interaction_two_lines([a1,b1,c1], [a2_CW,b2_CW,c2_CW])
+        vertices = _vertices(R_new)
+        sides = QuantumDot.get_sides_from_vertices(vertices)
 
-            p = p0_intsec if np.linalg.norm(p0_intsec)>=np.linalg.norm(p1_intsec) else p1_intsec
+        # get atoms inside polygon 
+        self.coords = QuantumDot.get_atoms_inside_polygon(self.coords, sides)
 
-        lines = []
-        for i in range(n):
-            p0 = rotate_on_vec(theta*i, p)
-            p1 = rotate_on_vec(theta*(i+1), p)
-            lines.append(get_line_through_two_points(p0, p1))
-
-
-        inds = site_inds_relative_a_line_including_specific_pnt(self.coords, lines[0], np.array([0,0]))
-        for i in range(1, len(lines)):
-            line = lines[i]
-            inds_tmp = site_inds_relative_a_line_including_specific_pnt(self.coords, line, np.array([0,0]))
-            inds = np.intersect1d(inds, inds_tmp) 
-        self.coords = self.coords[inds]       
         self.layer_nsites = self.get_layer_nsites()
         if rm_single_bond:
             self._remove_single_bonds()
@@ -367,6 +356,14 @@ class QuantumDot(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate):
                 return 'D%s' % self.nfold
             elif self.nfold == 12:
                 return 'D6'
+
+    def _plot_C2_axes(self, fig, ax):
+        self.plot(fig, ax, site_size=3.0, dpi=600, lw=0.6, edge_cut=0)
+        axes = self.all_C2_axes(self.orient)
+        R = np.max(np.linalg.norm(self.coords[:,0:2], axis=1))
+        for axis in axes:
+            p = R*axis
+            ax.plot([-p[0],p[0]],[-p[1],p[1]], color='blue', ls='dashed')
 
     def _remove_single_bonds(self):
 
