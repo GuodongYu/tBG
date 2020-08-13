@@ -94,12 +94,12 @@ class _MethodsHamilt:
         jx = np.zeros((ndim,ndim), dtype=float)
         jy = np.zeros((ndim,ndim), dtype=float)
         jz = np.zeros((ndim,ndim), dtype=float)
-        def put_value(pair):
+        def put_value(pair, t):
             rij = self.coords[pair[0]]-self.coords[pair[1]]
-            jx[pair[0],pair[1]], jy[pair[0],pair[1]], jz[pair[0],pair[1]] =  rij
-            jx[pair[1],pair[0]], jy[pair[1],pair[0]], jz[pair[1],pair[0]] =  -rij
+            jx[pair[0],pair[1]], jy[pair[0],pair[1]], jz[pair[0],pair[1]] =  rij*t
+            jx[pair[1],pair[0]], jy[pair[1],pair[0]], jz[pair[1],pair[0]] =  -rij*t
         pairs, ts = self.hopping
-        tmp = [put_value(pairs[i]) for i in range(len(ts))]
+        tmp = [put_value(pairs[i], ts[i]) for i in range(len(ts))]
         return c*np.array([jx, jy, jz])
 
 class _SymmetryOperate:
@@ -335,13 +335,16 @@ class _GemetryOperate:
         return Structure(latt, ['C']*nsite, coords, coords_are_cartesian=True)
 
 def symmetry_operations(point_group):
+    """
+    sigma_vs[0] includes x axis
+    """
     if point_group in ['D2h', 'D3h', 'D6h']:
         return ['Cns', 'C2s', 'Sns', 'sigma_vs', 'sigma_h']
     elif point_group in ['D2', 'D3', 'D6']:
         return ['Cns', 'C2s']
     elif point_group in ['C3v', 'C6v']:
         return ['Cns', 'sigma_vs']
-    elif point_group in ['D6d']:
+    elif point_group in ['D3d','D6d']:
         return ['Cns', 'C2s_QC', 'S2n_odds', 'sigma_vs']
 
 def all_C2_axes(n):
@@ -355,8 +358,18 @@ def all_C2_axes(n):
         axes.append(axis_i)
     return np.array(axes)
 
+class _Disorder:
+    def add_vacancy(self, concentration):
+        """
+        return the coords after adding vacancies with concentration 
+        """
+        natom = len(self.coords)
+        nvac = int(natom*concentration)
+        indices_vac = np.random.choice(natom, nvac, replace=False)
+        indices = np.setdiff1d(range(natom), indices_vac)
+        self.coords = self.coords[indices]
 
-class QuantumDot(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate):
+class QuantumDot(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate, _Disorder):
     """
     the class for a quantum dot of common twisted bilayer graphene
     x axis is always along one C2 axis (perpendicular to the primitive axis)
@@ -405,15 +418,12 @@ class QuantumDot(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate):
         
     def regular_polygon(self, n, R, twist_angle, overlap='hole', rm_single_bond=True, orient='armchair'):
         """
-        n: the regular polygon with n sides
+        n: the regular polygon with n sides (n=3, 6, 12)
         R: the distance from center to vertex (in units of a: the lattice constant of graphene)
         twist_angle: the twist angle between two layers
         rm_single_bond: whether the atom with only one negibors are removed
         """
         ######################## check inputs ################################################
-        if n==3 and overlap=='hole' and twist_angle==30.:
-            raise ValueError('You are trying to generate a graphene quasicrystal quantum dot, please use \
-                             Class QC_QuantumDot !!!')
         if overlap not in ['atom', 'hole', 'atom1']:
             raise ValueError('Overlap %s is not recogenized!' % overlap)
 
@@ -426,9 +436,6 @@ class QuantumDot(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate):
 
         if n in [6,12] and overlap!='hole':
             raise ValueError('For Hexgon or Decagon, overlap can only be hole!')
-
-        if n not in [3, 6, 12]:
-            print('Warnning: n != 3, 6, or 12, only structure is reasonable!!')
         ######################### check inputs done ###########################################
 
         self.orient = orient
@@ -461,7 +468,7 @@ class QuantumDot(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate):
                 return 'D6'
 
 
-class QuantumDotQC(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate):
+class QuantumDotQC(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate, _Disorder):
     """
     A quantum dot of 30 degree twisted bilayer graphene with rotation center at the hole of two layers
     x axis: armchair direction of bottom layer and zigzag direction of the top layer
@@ -493,4 +500,34 @@ class QuantumDotQC(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate)
         self.point_group = 'D6d'
         self.nfold = 6
 
+class QuantumDotAB(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate,_Disorder):
+    def __init__(self, a=2.46, h=3.35):
+        QuantumDot.__init__(self, a=a, h=h)
+
+    def regular_polygon(self, n, R, overlap='atom-atom', rm_single_bond=True):
+        self.nfold = n
+        b = self.a/np.sqrt(3)
+        self._initial_round_disk(R+2, 60., overlap='atom')
+        
+        self.nfold = 3
+        self.point_group = 'C3v'
+        
+        if overlap=='atom-atom':
+            if n in [6, 12]:
+                self.point_group = 'D3d'
+        else:
+            if overlap=='atom-hole':
+                orig = np.array([b, 0, 0])
+            elif overlap=='hole-atom':
+                orig = np.array([-b, 0, 0])
+            self.coords = self.coords - orig
+        ######################## informations of regular polygon ###############################
+        vertices = get_vertices_regular_polygon(n, self.a*(R+1.e-4))
+        sides = get_sides_from_vertices(vertices)
+        # get atoms inside polygon 
+        self.coords = filter_sites_inside_polygon(self.coords, sides)
+        ########################################################################################
+        self.layer_nsites = self.get_layer_nsites()
+        if rm_single_bond:
+            self._remove_single_bonds()
 
