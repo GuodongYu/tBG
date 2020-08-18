@@ -1,4 +1,4 @@
-from tBG.quantum_dot import QuantumDot, QuantumDotQC
+from tBG.quantum_dot import QuantumDot, QuantumDotQC, QuantumDotAB
 from monty.json import jsanitize
 import numpy as np
 import scipy.io
@@ -40,9 +40,9 @@ class PathName:
         return os.path.join(cls.title, 'QC', shape, 'hole')
 
     @classmethod
-    def AB_regular(cls, n):
+    def AB_regular(cls, n, overlap):
         shape = PathName._get_shape(n)
-        return os.path.join(cls.title, 'AB', shape, 'atom')
+        return os.path.join(cls.title, 'AB', shape, overlap)
 
 def is_done(fold):
     return os.path.isfile(fold+'/data.npz') and os.path.isfile(fold+'/POSCAR')
@@ -214,6 +214,17 @@ class OutputQD:
     def QC_regular(n, R, rm_single_bond=True, fold='.'):
         qd = QuantumDotQC()
         qd.regular_polygon(n, R, rm_single_bond=rm_single_bond)
+        l_side = Geometry.side_length(n, R) 
+        S = Geometry.square_regular(n, R)
+        fold = fold+'_'+qd.point_group+'_nsite%i' % len(qd.coords)+'_lside%.2fnm' % l_side +"_S%.2fnm2" % S
+        if not os.path.isdir(fold):
+            os.makedirs(fold)
+        OutputQD._bilayer_output(qd, fold)
+
+    @staticmethod
+    def AB_regular(n, R, overlap, rm_single_bond=True, fold='.'):
+        qd = QuantumDotAB()
+        qd.regular_polygon(n, R, overlap=overlap, rm_single_bond=rm_single_bond)
         l_side = Geometry.side_length(n, R) 
         S = Geometry.square_regular(n, R)
         fold = fold+'_'+qd.point_group+'_nsite%i' % len(qd.coords)+'_lside%.2fnm' % l_side +"_S%.2fnm2" % S
@@ -469,6 +480,32 @@ class MassOutput:
             for R in undo:
                 where = os.path.join(path, 'R%s' % R)
                 OutputQD.QC_regular(n, R, rm_single_bond=rm_single_bond, fold=where)
+        
+        undo = UnfinishedJobs.Rs(finished, Rs)
+        print('Running %s' % grp, undo)
+        if nr_processes == 1:
+            output(Rs)
+        else:
+            div = div_groups(Rs, nr_processes)
+            processes = [None for i in range(nr_processes)]
+            for i, tags in enumerate(div):
+                processes[i] = mp.Process(target=output, args=(tags,))
+                processes[i].start()
+            for p in processes:
+                p.join()
+
+    def AB_regular(self, n, Rs, overlap, rm_single_bond=True, nr_processes=1): 
+        grp = '/'.join(PathName.AB_regular(n, overlap).split('/')[1:])
+        finished = self._read_finished_jobs(grp)
+
+        Rs = np.round(Rs, 2)
+        path_title = PathName.AB_regular(n, overlap)
+        path = os.path.join(self.prefix, path_title)
+
+        def output(Rs):
+            for R in undo:
+                where = os.path.join(path, 'R%s' % R)
+                OutputQD.AB_regular(n, R, overlap=overlap, rm_single_bond=rm_single_bond, fold=where)
         
         undo = UnfinishedJobs.Rs(finished, Rs)
         print('Running %s' % grp, undo)
