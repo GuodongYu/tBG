@@ -393,8 +393,9 @@ class QuantumDot(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate, _
         angle_axis0_x = self._angle_C2_axis0_x()
         self.coords = rotate_on_vec(-angle_axis0_x, self.coords)
 
-
-    def rectangle(self, w, h, twist_angle, overlap='side_center', rm_single_bond=True):
+    def rectangle(self, w, h, twist_angle, overlap='side_center', rm_single_bond=True, new_cut_style=False):
+        if overlap not in ['side_center', 'hole']:
+            raise ValueError("Overlap can only be 'side_center' or 'hole' to keep the symmetry")
         self.orient = 'armchair'
         self.nfold = 2
         R = np.sqrt(w**2/4+h**2/4)
@@ -406,22 +407,32 @@ class QuantumDot(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate, _
         vert2 = self.a*np.array([-w/2, -h/2])
         vert3 = self.a*np.array([ w/2, -h/2])
         vertices = np.array([vert0, vert1, vert2, vert3])
+        if new_cut_style:
+            vertices = rotate_on_vec(-twist_angle/2, vertices) # cut with reference of bottom layer
         ## get all sides
         sides = get_sides_from_vertices(vertices)
         # get atoms inside polygon 
         self.coords = filter_sites_inside_polygon(self.coords, sides)
+        if new_cut_style:
+            coords_bottom =  self.coords[np.where(self.coords[:,-1]==0.0)[0]] ## left only bottom 
+            coords_top = rotate_on_vec(twist_angle, coords_bottom)
+            coords_top[:,-1] = self.h
+            self.coords = np.concatenate([coords_bottom, coords_top]) 
         
         self.layer_nsites = self.get_layer_nsites()
         if rm_single_bond:
             self._remove_single_bonds()
         self.point_group = self.get_point_group()
         
-    def regular_polygon(self, n, R, twist_angle, overlap='hole', rm_single_bond=True, orient='armchair'):
+    def regular_polygon(self, n, R, twist_angle, overlap='hole', rm_single_bond=True, \
+                         orient='armchair', new_cut_style=False):
         """
         n: the regular polygon with n sides (n=3, 6, 12)
         R: the distance from center to vertex (in units of a: the lattice constant of graphene)
         twist_angle: the twist angle between two layers
         rm_single_bond: whether the atom with only one negibors are removed
+        orient: zigzag or armchair along x-axis
+        new_cut_style: False: rotate and cut, True: cut and rotate
         """
         ######################## check inputs ################################################
         if overlap not in ['atom', 'hole', 'atom1']:
@@ -440,14 +451,22 @@ class QuantumDot(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate, _
 
         self.orient = orient
         self.nfold = n
-        self._initial_round_disk(R+2, twist_angle, overlap=overlap)
-        self.rotate_struct_axis0_to_x_axis()
 
         ######################## informations of regular polygon ###############################
         vertices = get_vertices_regular_polygon(self.nfold, self.a*(R+1.e-4))
+        if new_cut_style:
+            vertices = rotate_on_vec(-twist_angle/2, vertices) # cut with reference of bottom layer
         sides = get_sides_from_vertices(vertices)
         # get atoms inside polygon 
+        self._initial_round_disk(R+2, twist_angle, overlap=overlap)
+        self.rotate_struct_axis0_to_x_axis()
         self.coords = filter_sites_inside_polygon(self.coords, sides)
+        if new_cut_style:
+            coords_bottom =  self.coords[np.where(self.coords[:,-1]==0.0)[0]] ## left only bottom 
+            coords_top = rotate_on_vec(twist_angle, coords_bottom)
+            coords_top[:,-1] = self.h
+            self.coords = np.concatenate([coords_bottom, coords_top]) 
+            
         ########################################################################################
 
         self.layer_nsites = self.get_layer_nsites()
@@ -516,9 +535,9 @@ class QuantumDotAB(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate,
             if n in [6, 12]:
                 self.point_group = 'D3d'
         else:
-            if overlap=='atom-hole':
+            if overlap=='atom-hole': # top hole over bottom atom directly
                 orig = np.array([b, 0, 0])
-            elif overlap=='hole-atom':
+            elif overlap=='hole-atom': # top atom over bottom hole directly
                 orig = np.array([-b, 0, 0])
             self.coords = self.coords - orig
         ######################## informations of regular polygon ###############################
