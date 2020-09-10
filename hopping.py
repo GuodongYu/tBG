@@ -267,14 +267,14 @@ def calc_hoppings(site0s, bin0s, site1s=[], bin1s={}, hop_func=hop_func_pz(), ma
     bin0s, idx0_from = bin0s
 
     if len(site1s):
-        ## the case of two layers
+        ## the case of two systems
         bin1s, idx1_from = bin1s
         hop_type = 'inter'
         neighs = [(-1,-1),(-1,0),(-1,1), \
                   (0, -1),(0, 0),(0, 1), \
                   (1, -1),(1, 0),(1, 1)]
     else:
-        ## the case of one layer 
+        ## the case of one system 
         bin1s = bin0s
         idx1_from = idx0_from
         site1s = site0s
@@ -340,9 +340,9 @@ def calc_hoppings(site0s, bin0s, site1s=[], bin1s={}, hop_func=hop_func_pz(), ma
         keys = np.concatenate([i[0] for i in out])
         values = np.concatenate([i[1] for i in out])
         if hop_type == 'intra':
-            out_intra = np.array([hops_within_bin(bin0) for bin0 in bins0])
-            keys = np.append(keys, np.concatenate(out_intra[:,0]), axis=0)
-            values = np.append(values, np.concatenate(out_intra[:,1]), axis=0)
+            out_intra = [hops_within_bin(bin0) for bin0 in bins0]
+            keys = np.concatenate([i[0] for i in out_intra])
+            values = np.concatenate([i[1] for i in out_intra])
         if conn:
             conn.send((keys, values))
             return
