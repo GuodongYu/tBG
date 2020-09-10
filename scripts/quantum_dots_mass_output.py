@@ -7,6 +7,7 @@ import os
 import json
 import re
 import copy
+import time
 import multiprocessing as mp
 
 class PathName:
@@ -167,32 +168,53 @@ class Geometry:
     @classmethod
     def natom2WH(cls, ratio_W2H, natom):
         H = np.sqrt(natom*cls.s0/(2*ratio_W2H))/cls.a
-        return [ratio_W2H*H, H]
+        return np.array([ratio_W2H*H, H]).T
         
 class OutputQD:
     @staticmethod
-    def _bilayer_output(qd, fold):
+    def _bilayer_output(qd, fold, split=False):
         pmg_st = qd.pmg_struct()
         pmg_st.to('poscar',os.path.join(fold, 'POSCAR'))
         del pmg_st
+        t0 =time.time()
         qd.add_hopping_pz(max_dist=5.0, g0=2.8, a0=1.42, g1=0.48, h0=3.35, rc=6.14, lc=0.265, q_dist_scale=2.218, nr_processes=1)
-        H = qd.get_Hamiltonian()
-        J = qd.get_current_mat()
-        ops = qd.symmetry_operations()
-        ops_np = {i:ops[i] for i in ops}
-        ops_np['H_mat'] = H
-        ops_np['J_mat'] = J
+        t1 = time.time()
+        print('time for adding hopping: %s s' % (t1-t0))
+        if split:
+            H = qd.get_Hamiltonian()
+            np.savez_compressed(os.path.join(fold, 'H_mat'), H_mat=H)
+            del H
+            J = qd.get_current_mat()
+            np.savez_compressed(os.path.join(fold, 'J_mat'), J_mat=J)
+            del J
+            ops = qd.symmetry_operations()
+            ops_np = {i:ops[i] for i in ops}
+            del ops
+            np.savez_compressed(os.path.join(fold, 'ops'), **ops_np)
+        else:
+            t0 = time.time()
+            H = qd.get_Hamiltonian()
+            t1 = time.time()
+            print('time for getting H %s s' % (t1-t0))
+            J = qd.get_current_mat()
+            t2 = time.time()
+            print('time for getting J %s s' % (t2-t1))
+            
+            ops = qd.symmetry_operations()
+            ops_np = {i:ops[i] for i in ops}
+            ops_np['H_mat'] = H
+            ops_np['J_mat'] = J
+            t3 = time.time()
+            print('time for getting ops %s s' % (t3-t2))
     
-        ops_matlab = {i:ops[i]+1 for i in ops}
-        ops_matlab['H_mat'] = H
-        ops_matlab['J_mat'] = J
-        np.savez_compressed(os.path.join(fold, 'data'), **ops_np)
-        #scipy.io.savemat(os.path.join(fold, 'data.mat'), mdict=ops_matlab)
+            np.savez_compressed(os.path.join(fold, 'data'), **ops_np)
+            t4 = time.time()
+            print('time for output %s s' % (t4-t3))
 
     @staticmethod
-    def tBG_regular(n, R, theta, overlap, orient, rm_single_bond=True, fold='.'):
+    def tBG_regular(n, R, theta, overlap, orient, rm_single_bond=True, fold='.', new_cut_style=False):
         qd = QuantumDot()
-        qd.regular_polygon(n, R, theta, overlap=overlap, orient=orient, rm_single_bond=rm_single_bond)
+        qd.regular_polygon(n, R, theta, overlap=overlap, orient=orient, rm_single_bond=rm_single_bond, new_cut_style=new_cut_style)
         l_side = Geometry.side_length(n, R)
         S = Geometry.square_regular(n, R) 
         fold = fold+'_'+qd.point_group+'_nsite%i' % len(qd.coords)+'_lside%.2fnm' % l_side +'_S%.2fnm2' % S
@@ -201,9 +223,9 @@ class OutputQD:
         OutputQD._bilayer_output(qd, fold)
 
     @staticmethod
-    def tBG_rectangle(w, h, theta, rm_single_bond=True, fold='.'):
+    def tBG_rectangle(w, h, theta, rm_single_bond=True, fold='.', new_cut_style=False):
         qd = QuantumDot()
-        qd.rectangle(w, h, theta, overlap='side_center', rm_single_bond=rm_single_bond)
+        qd.rectangle(w, h, theta, overlap='side_center', rm_single_bond=rm_single_bond, new_cut_style=new_cut_style)
         pg = qd.point_group
         fold = fold + '_' + pg + '_nsites%i' % len(qd.coords)
         if not os.path.isdir(fold):
@@ -212,6 +234,7 @@ class OutputQD:
 
     @staticmethod
     def QC_regular(n, R, rm_single_bond=True, fold='.'):
+        t0 = time.time()
         qd = QuantumDotQC()
         qd.regular_polygon(n, R, rm_single_bond=rm_single_bond)
         l_side = Geometry.side_length(n, R) 
@@ -219,6 +242,8 @@ class OutputQD:
         fold = fold+'_'+qd.point_group+'_nsite%i' % len(qd.coords)+'_lside%.2fnm' % l_side +"_S%.2fnm2" % S
         if not os.path.isdir(fold):
             os.makedirs(fold)
+        t1 = time.time()
+        print('time for preparing %s s' % (t1-t0))
         OutputQD._bilayer_output(qd, fold)
 
     @staticmethod
@@ -240,6 +265,9 @@ class JobStatus:
         self.jobs_status_file = os.path.join(self.root, 'finished_jobs.json')
 
     def _scan_folder_tree(self, check=False):
+        """
+        scan the whole folder tree in self.root including ignoring whether finished
+        """
         out = {}
         folds = [i[0] for i in os.walk(self.root) if i[-2] and i[-2][0][0] in ['R','W']]
         grps_name = [i.replace(self.root, '')[1:] for i in folds]
@@ -253,6 +281,9 @@ class JobStatus:
         return out
 
     def _read_finished_jobs(self):
+        """
+        read finished jobs saved in self.jobs_status_file
+        """
         if os.path.getsize(self.jobs_status_file):
             finished = json.load(open(self.jobs_status_file))
         else:
@@ -271,6 +302,10 @@ class JobStatus:
         return out
 
     def _diff_scanned_and_saved(self):
+        """
+        get the jobs scanned but not saved in self.jobs_status_file 
+        scanned jobs can include the unfinished, such as the case of a huge size system without data.npz output
+        """
         out = {}
         scanned = self._scan_folder_tree()
         finished = self._read_finished_jobs()
@@ -299,7 +334,13 @@ class JobStatus:
         
         return out
 
-    def _screen_diff(self):
+    def _diff_finished_and_saved(self):
+        """
+        get finished output but not saved in self.jobs_status_file
+        Two steps are taken:
+        1: get the diff between saved and scaned, namely the output of self._diff_scanned_and_saved
+        2: check whether they are finished among the outpu by step 1, and output just the finished 
+        """
         def get_folders(Rs, folder):
             ndim = np.array(Rs).ndim
             fs_all = glob.glob(folder+'/*')
@@ -340,11 +381,14 @@ class JobStatus:
         return out
 
     def _merge_saved_and_screened_diff(self, fast=True):
+        """
+        return a job dictionary which merges the saved and finished-but-not-saved jobs
+        """
         if fast:
             finished = self._read_finished_jobs()
         else:
             finished = {}
-        screened = self._screen_diff()
+        screened = self._diff_finished_and_saved()
         for grp in screened:
             if grp not in finished:
                 finished[grp] = screened[grp]
@@ -358,6 +402,10 @@ class JobStatus:
                 else:
                     finished[grp] = np.append(finished[grp], screened[grp])             
         return finished
+
+    def _del_unfinished_and_scanned(self):
+        self.update()
+        
                
     def update(self, fast=True):
         if not os.path.isdir(self.root):
@@ -369,6 +417,13 @@ class JobStatus:
             json.dump(jsanitize(finished_all), f) 
 
 def div_groups(ll, n_group):
+    """
+    divide a list into n_group groups
+    
+    example:
+    if ll=[1,2,3,4,5,6,7,8] n_group= 3
+    return [[1,4,7],[2,5,8],[3,6]]
+    """
     ll = np.array(ll, dtype=np.float64)
     if ll.ndim == 1:
         ll = sorted(ll)
@@ -387,6 +442,10 @@ def div_groups(ll, n_group):
     return div
 
 def convert_undo(undo):
+    """
+    convert job dictionary into list
+    such as {1.2:[1,2], 2.7:[8,9]} -> [[1.2, 1], [1.2, 2], [2.7, 8], [2.7, 9]]
+    """
     if not undo:
         return []
     one_key = np.array(list(undo.keys())[0])
@@ -398,7 +457,9 @@ def convert_undo(undo):
 
 
 class MassOutput:
-
+    """
+    mass output quantum dots
+    """
     def __init__(self, prefix='.', update_job_info=True):
         self.prefix = prefix
         self.root = os.path.join(prefix, PathName.title)
@@ -412,7 +473,7 @@ class MassOutput:
         else:
             return {}
 
-    def tBG_regular(self, n, Rs, thetas, overlap, orient, rm_single_bond=True, nr_processes=1):
+    def tBG_regular(self, n, Rs, thetas, overlap, orient, rm_single_bond=True, nr_processes=1, new_cut_style=False):
         grp = '/'.join(PathName.tBG_regular(n, overlap, orient).split('/')[1:])
         finished = self._read_finished_jobs(grp)
         path_title = PathName.tBG_regular(n, overlap, orient)
@@ -421,7 +482,7 @@ class MassOutput:
         def output(Rs_thetas):
             for R, theta in Rs_thetas:
                 where = os.path.join(path, 'R%s' % R, 'theta%s' % theta)
-                OutputQD.tBG_regular(n, R, theta, overlap, orient, rm_single_bond=rm_single_bond, fold=where)       
+                OutputQD.tBG_regular(n, R, theta, overlap, orient, rm_single_bond=rm_single_bond, fold=where, new_cut_style=new_cut_style)       
 
         Rs = np.round(Rs, 2)
         thetas = np.round(thetas, 2)
@@ -440,7 +501,7 @@ class MassOutput:
             for p in processes:
                 p.join()
 
-    def tBG_rectangle(self, sizes, thetas, rm_single_bond=True, nr_processes=1):
+    def tBG_rectangle(self, sizes, thetas, rm_single_bond=True, nr_processes=1, new_cut_style=False):
         grp = '/'.join(PathName.tBG_rectangle().split('/')[1:])
         finished = self._read_finished_jobs(grp)
 
@@ -452,7 +513,7 @@ class MassOutput:
         def output(WHs_thetas): 
             for W,H,theta in WHs_thetas:
                 where = os.path.join(path, 'W%s_H%s' % (W, H), 'theta%s' % theta)
-                OutputQD.tBG_rectangle(W, H, theta, rm_single_bond=rm_single_bond, fold=where)
+                OutputQD.tBG_rectangle(W, H, theta, rm_single_bond=rm_single_bond, fold=where, new_cut_style=new_cut_style)
        
         undo = UnfinishedJobs.Rs_thetas(finished, sizes, thetas) 
         print('Running %s' % grp, undo)
@@ -462,6 +523,7 @@ class MassOutput:
         else:
             div = div_groups(WHs_thetas, nr_processes)
             processes = [None for i in range(nr_processes)]
+            print('Groups for parallel: ', div)
             for i, tags in enumerate(div):
                 processes[i] = mp.Process(target=output, args=(tags,))
                 processes[i].start()
@@ -477,7 +539,7 @@ class MassOutput:
         path = os.path.join(self.prefix, path_title)
 
         def output(Rs):
-            for R in undo:
+            for R in Rs:
                 where = os.path.join(path, 'R%s' % R)
                 OutputQD.QC_regular(n, R, rm_single_bond=rm_single_bond, fold=where)
         
@@ -488,6 +550,7 @@ class MassOutput:
         else:
             div = div_groups(Rs, nr_processes)
             processes = [None for i in range(nr_processes)]
+            print('Groups for parallel: ', div)
             for i, tags in enumerate(div):
                 processes[i] = mp.Process(target=output, args=(tags,))
                 processes[i].start()
@@ -503,7 +566,7 @@ class MassOutput:
         path = os.path.join(self.prefix, path_title)
 
         def output(Rs):
-            for R in undo:
+            for R in Rs:
                 where = os.path.join(path, 'R%s' % R)
                 OutputQD.AB_regular(n, R, overlap=overlap, rm_single_bond=rm_single_bond, fold=where)
         
@@ -513,6 +576,7 @@ class MassOutput:
             output(Rs)
         else:
             div = div_groups(Rs, nr_processes)
+            print('Groups for parallel: ', div)
             processes = [None for i in range(nr_processes)]
             for i, tags in enumerate(div):
                 processes[i] = mp.Process(target=output, args=(tags,))
