@@ -5,11 +5,57 @@ from tBG.fortran.spec_func import get_pk
 import copy
 from tBG.utils import frac2cart
 
+def get_append_dict(stack):
+    """
+    get the append dictionary of a multilayer stack
+    as input parameter of function self.append_layers() 
+    """
+    stack = stack.replace('Atld', 'C')
+    stack = stack.replace('At', 'C')
+    stack = stack.replace('Btld', 'D')
+    stack = stack.replace('Bt', 'D')
+    for i in range(len(stack)):
+        if stack[i]=='A' and stack[i+1]=='C':
+            ind = i
+            break
+    ids = np.array(range(len(stack))) - ind
+    append = {}
+    for i in range(len(stack)):
+        if i in [ind, ind+1]:
+            continue
+        layer = stack[i]
+        if layer == 'C':
+            layer_ = 'Atld'
+        elif layer == 'D':
+            layer_ = 'Btld'
+        else:
+            layer_ = layer
+        try:
+            append[layer_].append(ids[i])
+        except:
+            append[layer_] = [ids[i]]
+    return append
+
 class _LayeredStructMethods:
     def pymatgen_struct(self):
-        return pmg_struct(self.latt_vec, ['C']*len(self.coords), self.coords, coords_are_cartesian=True)
+        try:
+            return pmg_struct(self.latt_vec, ['C']*len(self.coords), self.coords, coords_are_cartesian=True)
+        except:
+            coords = copy.deepcopy(self.coords)
+            nsite  = len(coords)
+            x_min, y_min, z_min = np.min(coords, axis=0)
+            x_max, y_max, z_max = np.max(coords, axis=0)
+            coords[:,0] = coords[:,0] - x_min + 10
+            coords[:,1] = coords[:,1] - y_min + 10
+            coords[:,2] = coords[:,2] - z_min + 10
+            latt_vec = np.array([[x_max-x_min+20, 0, 0],[0, y_max-y_min+20, 0],[0, 0, z_max-z_min+20]])
+            eles = ['C', 'Si', 'Ge', 'Se']
+            species = [[eles[i]]*self.layer_nsites[i] for i in range(len(self.layer_nsites))]
+            species = np.concatenate(species)
+            return  pmg_struct(latt_vec, species, coords, coords_are_cartesian=True)
 
-    def get_vecs_to_NNs(self):
+
+    def get_layer_vecs_to_NNs(self):
         """
         get the vecs to the nearest neighbors
         the vecs are used to add interlayer hopping between wannier functions
@@ -96,6 +142,40 @@ class _LayeredStructMethods:
                 self.layer_nsites_sublatt.append(nsites_sublatt(layer))
                 self.layer_latt_vecs = np.append(self.layer_latt_vecs, [latt_vec(layer)], axis=0)
         self.nsite = len(self.coords)
+    def remove_top_layer(self):
+        """
+        after removing the top layer, it changes to be graphene
+        """
+        ids = self._layer_inds()[0]
+        self.coords = self.coords[0:ids[1]+1]
+        self.layer_nsites = [self.layer_nsites[0]]
+        self.layer_zcoords = [self.layer_zcoords[0]]
+        self.layer_types = [self.layer_types[0]]
+
+    def adjust_interlayer_dists(self, interlayer_dists={'AA':3.61, 'AB':3.38, 'AAtld':3.46}):
+        """
+        adjust the interlayer distances according to the inputing parameter: interlayer_dists
+        """
+        hs = interlayer_dists
+        hs['BA'] = hs['AB']
+        hs['AtldA'] = hs['AAtld']
+        hs['AtldAtld'] = hs['AA']
+        hs['BtldBtld'] = hs['AA']
+        hs['AtldBtld'] = hs['AB']
+        hs['BtldAtld'] = hs['AB']
+        hs['BB'] = hs['AA']
+        ids = self._layer_inds()
+        ids_sort = np.argsort(self.layer_zcoords)
+        zs = [0.]
+        for i in range(1,len(ids_sort)):
+            ind = ids_sort[i]
+            ind0 = ids_sort[i-1]
+            stack = self.layer_types[ind0]+self.layer_types[ind]
+            zs.append(zs[-1]+hs[stack])
+        for i in range(len(zs)):
+            ind = ids_sort[i]
+            self.layer_zcoords[ind]=zs[i]
+            self.coords[:,-1][ids[ind][0]:ids[ind][1]+1] = zs[i]
 
 class _MoirePatternMethods(_LayeredStructMethods):
 
@@ -110,13 +190,14 @@ class _MoirePatternMethods(_LayeredStructMethods):
     def add_hopping_wannier(self, max_dist=5.0, P=0, ts=[-2.8922, 0.2425, -0.2656, 0.0235, 0.0524, -0.0209, -0.0148, -0.0211]):
         if len(self.layer_nsites)>2:
             raise ValueError('Current version can not be used for nlayer>2')
-        from tBG.hopping import calc_hopping_wannier_PBC
+        from tBG.hopping import calc_hopping_wannier_PBC, calc_hopping_wannier_PBC_new
         pmg_st = self.pymatgen_struct()
         layer_inds = self._layer_inds()
-        layer_vec_to_NN = self.get_vecs_to_NNs()
+        layer_inds_sublatt = self._layer_inds_sublatt()
+        layer_vec_to_NN = self.get_layer_vecs_to_NNs()
         latt_cont_max = max(np.linalg.norm(self.latt_vec_bott, axis=1)[0:2])
-        self.hoppings = calc_hopping_wannier_PBC(pmg_st, layer_inds, layer_vec_to_NN, \
-                                      latt_cont_max, max_dist=max_dist, P=P, ts=ts, a=self.a)
+        self.hoppings = calc_hopping_wannier_PBC_new(pmg_st, layer_inds, layer_inds_sublatt, layer_vec_to_NN, \
+                                                   max_dist=max_dist, P=P, ts=ts, a=self.a)
     def hoppings_2to3(self):
         return [{(j[0],j[1],0,j[2]):self.hoppings[i][j] for j in self.hoppings[i]} for i in range(self.nsite)]
 
