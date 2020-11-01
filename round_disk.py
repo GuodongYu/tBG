@@ -10,30 +10,108 @@ import multiprocessing as mp
 from multiprocessing import Pool
 import itertools
 import os
-from tBG.hopping import divide_sites_2D, calc_hoppings, hop_list_graphene_wannier
+from tBG.hopping import divide_sites_2D, calc_hoppings, hop_list_graphene_wannier, calc_hopping_wannier_PBC_new
 from tBG.utils import *
 from tBG.hopping import SparseHopDict
+from tBG.periodic_structures import _LayeredStructMethods
 
-pi = np.pi
+class _MethodsHamilt:
+    def get_Hamiltonian(self):
+        ndim = len(self.coords)
+        H = np.zeros((ndim,ndim), dtype=float)
+        def put_value(pair, t):
+            H[pair[0],pair[1]] =  t
+            H[pair[1],pair[0]] =  t
+        pairs, ts = self.hopping
+        tmp = [put_value(pairs[i], ts[i]) for i in range(len(ts))]
+        return H
 
-"""
-TO DO: merge this file into quantum_dot.py file
-"""
-class _Methods:
-    def pymatgen_struct(self):
-        from pymatgen.core.structure import Structure as pmg_struct
-        coords = copy.deepcopy(self.coords)
-        nsite  = len(coords)
-        x_min, y_min, z_min = np.min(coords, axis=0)
-        x_max, y_max, z_max = np.max(coords, axis=0)
-        coords[:,0] = coords[:,0] - x_min + 5 
-        coords[:,1] = coords[:,1] - y_min + 5 
-        coords[:,2] = coords[:,2] - z_min + 5 
-        latt_vec = np.array([[x_max-x_min+20, 0, 0],[0, y_max-y_min+20, 0],[0, 0, z_max-z_min+20]])
-        return  pmg_struct(latt_vec, ['C']*int(nsite/2)+['Fe']*int(nsite/2), coords, coords_are_cartesian=True)
+    def get_current_mat(self):
+        c = 1.0
+        ndim = len(self.coords)
+        jx = np.zeros((ndim,ndim), dtype=float)
+        jy = np.zeros((ndim,ndim), dtype=float)
+        jz = np.zeros((ndim,ndim), dtype=float)
+        def put_value(pair, t):
+            rij = self.coords[pair[0]]-self.coords[pair[1]]
+            jx[pair[0],pair[1]], jy[pair[0],pair[1]], jz[pair[0],pair[1]] =  rij*t
+            jx[pair[1],pair[0]], jy[pair[1],pair[0]], jz[pair[1],pair[0]] =  -rij*t
+        pairs, ts = self.hopping
+        tmp = [put_value(pairs[i], ts[i]) for i in range(len(ts))]
+        return c*np.array([jx, jy, jz])
 
-class Structure(_Methods):
-    def read_relaxed_struct_from_file(self, filename):
+    def add_hopping_pz(self, split=False, max_dist=5.0, g0=3.12, a0=1.42, g1=0.48, h0=3.349, \
+                                     rc=6.14, lc=0.265, q_dist_scale=2.218, nr_processes=1):
+        from tBG.hopping import hop_func_pz 
+        hop_func = hop_func_pz(g0=g0, a0=a0, g1=g1, h0=h0, rc=rc, lc=lc, q_dist_scale=q_dist_scale)
+
+        if split:
+            nlayer = len(self.layer_nsites)
+            layid_sorted = np.argsort(self.layer_zcoords)
+            layer_inds = self._layer_inds()
+
+            def collect_layer_data(lay_id):
+                id_range = layer_inds[lay_id]
+                sites = self.coords[id_range[0]:id_range[1]+1]
+                bins = divide_sites_2D(sites, bin_box=[[max_dist,0],[0,max_dist]], idx_from=id_range[0])
+                return sites, bins
+
+            ## intralayer hopping
+            for i in range(nlayer):
+                lay_id = layid_sorted[i]
+                sites, bins = collect_layer_data(lay_id)
+                key, value = calc_hoppings(sites, bins, hop_func=hop_func, max_dist=max_dist, nr_processes=nr_processes)
+                try:
+                    keys = np.concatenate([keys, key], axis=0)
+                    values = np.concatenate([values, value], axis=0)
+                except:
+                    keys = key
+                    values = value
+
+            ## interlayer hopping
+            for i in range(nlayer-1):
+                lay0_id = layid_sorted[i]
+                site0s, bin0s = collect_layer_data(lay0_id)
+
+                lay1_id = layid_sorted[i+1]
+                site1s, bin1s = collect_layer_data(lay1_id)
+
+                key, value = calc_hoppings(site0s, bin0s, site1s, bin1s, hop_func=hop_func, max_dist=max_dist, nr_processes=nr_processes)
+
+                keys = np.concatenate([keys, key], axis=0)
+                values = np.concatenate([values, value], axis=0)
+        else:
+            sites = self.coords
+            bins = divide_sites_2D(sites, bin_box=[[max_dist,0],[0,max_dist]], idx_from=0)
+            keys, values = calc_hoppings(sites, bins, hop_func=hop_func, max_dist=max_dist, nr_processes=nr_processes)
+        self.hopping = keys, values
+
+    def add_hopping_wannier(self, max_dist=6.0, P=0, \
+                            ts=[-2.8922, 0.2425, -0.2656, 0.0235, \
+                              0.0524,  -0.0209, -0.0148, -0.0211]):
+        """
+        *** just for the case of two layers ***
+        max_dist: the interlayer hopping will be add if C-C distance less than max_dist
+        P: pressure 
+        ts: the hopping energies for the first 8-nearest neighbors for intralayer 
+        """
+        pmg_st = self.pymatgen_struct()
+
+        nlayer = len(self.layer_nsites)
+        vecs_site0 = [np.sum(self.layer_latt_vecs[i], axis=0)/3. for i in range(nlayer)]
+        layer_vec_to_NN =  np.array([[i, -i] for i in vecs_site0])
+
+        layer_inds = self._layer_inds()
+        layer_inds_sublatt = self._layer_inds_sublatt()
+        hopping = calc_hopping_wannier_PBC_new(pmg_st, layer_inds, layer_inds_sublatt, layer_vec_to_NN, \
+                                       max_dist=max_dist, P=P, ts=ts, a=self.a)
+
+        keys = [[i,j[-1]] for i in range(len(hopping)) for j in hopping[i]]
+        values = [hopping[i][j] for i in range(len(hopping)) for j in hopping[i]]
+        self.hopping = [np.array(keys), np.array(values)]
+
+class Read:
+    def from_relaxed_struct_from_file(self, filename):
         """
         read the xyz file for site coords. 
         don't forget to add hopping manually after reading.
@@ -49,12 +127,13 @@ class Structure(_Methods):
         self.h = 3.461
         self.a = 2.456
 
-    def read_struct_and_hopping_from_file(self, filename):
+    def read_struct_and_hopping(self, filename):
         d = np.load(filename)
         self.coords = d['coords']
         self.hopping = (d['hop_keys'], d['hop_vals'])
 
-    def output_struct_to_xyz_file(self):
+class _Output:
+    def output_xyz_struct(self):
         atom_type = np.concatenate(tuple((np.repeat([i+1],self.layer_nsites[i]) for i in range(len(self.layer_nsites)))))
         coord_str = np.append(np.array([atom_type], dtype=str), self.coords.T, axis=0).T
         #coord_str = np.array(coord, ntype=str)
@@ -63,7 +142,91 @@ class Structure(_Methods):
             f.write('%s\n' % len(self.coords))
             f.write('Relaxed structure\n')
             f.write(coord_str)
-            
+
+    def output_lammps_struct(self, atom_style='full'):
+        """
+        atom_style: 'full' or 'atomic' which determine the format of the
+                     atom part in data file
+        atoms in different layers were given differen atom_type and molecule-tag
+        """
+        from lammps import write_lammps_datafile
+        n_atom = np.sum(self.layer_nsites)
+        n_atom_type = len(self.layer_zcoords)
+        mass = [12.0107]*n_atom_type
+
+        a = [min(self.coords[:,0])-100, max(self.coords[:,0])+100]
+        b = [min(self.coords[:,1])-100, max(self.coords[:,1])+100]
+        c = [min(self.coords[:,2])-100, max(self.coords[:,2])+100]
+        box = [a, b, c]
+        tilts = [0, 0, 0]
+
+        atom_id = range(1, n_atom+1)
+        atom_type = np.concatenate([[i]*self.layer_nsites[i-1] for i in range(1, n_atom_type+1)])
+        molecule_tag = atom_type
+        q = [0.0] * n_atom
+        write_lammps_datafile(box, atom_id, self.coords, n_atom, n_atom_type, mass, atom_type, atom_style=atom_style, \
+                              tilts=tilts, qs=q, molecule_tag=molecule_tag)
+
+    def save_to(self, fname='struct'):
+        out={}
+        hop_keys, hop_vals = self.hopping
+        out['hopping_parameters'] = self.hopping_parameters
+        np.savez_compressed(fname, coords=self.coords, hop_keys=hop_keys, hop_vals=hop_vals, info=[out])
+
+    def _plot_stack(self, fname='stack'):
+        from matplotlib import pyplot as plt
+        z_min = min(self.layer_zcoords)
+        z_max = max(self.layer_zcoords)
+        scale = self.h
+        for i in range(len(self.layer_zcoords)):
+            z = self.layer_zcoords[i]/scale
+            label = self.layer_types[i]
+            if 'tld' in label:
+                label = '$\widetilde{' + label[0]+'}$'
+            else:
+                label = '$'+label+'$'
+            plt.plot([0, 0.5], [z, z], color='black', linewidth=2.0)
+            plt.text(0.52, z, label, verticalalignment='center', horizontalalignment='left', fontsize=20)
+        plt.xlim((0,1.0))
+        plt.ylim((z_min/scale-2, z_max/scale+2))
+        plt.axis('off')
+        plt.savefig(fname+'.pdf')
+        plt.clf()
+
+    def plot(self, fig, ax ,site_size=3.0, dpi=600, lw=0.6, edge_cut=None):
+        import matplotlib.collections as mc
+        nsites = len(self.coords)
+        cs = {'A':'black', 'Atld':'red', 'B':'grey', 'Btld':'orange'}
+        layer_inds = self._layer_inds()
+        layer_hops = [[] for _ in range(len(self.layer_nsites))]
+        for pair, hop in zip(self.hopping[0], self.hopping[1]):
+            i,j = pair
+            for k in range(len(layer_inds)):
+                ind0,ind1 = layer_inds[k]
+                if ind0<=i<=ind1 and ind0<=j<=ind1:
+                    layer_hops[k].append([self.coords[i][:2],self.coords[j][:2]])
+        for i in np.array(self.layer_zcoords).argsort():
+            layer_type = self.layer_types[i]
+            ind0,ind1 = layer_inds[i]
+            line = mc.LineCollection(layer_hops[i], [0.1]*len(layer_hops[i]),colors=cs[layer_type], lw=lw)
+            fig.canvas.draw()
+            renderer = fig.canvas.renderer
+            ax.add_collection(line)
+            ax.draw(renderer)
+            ax.scatter(self.coords[:,0][ind0:ind1+1], self.coords[:,1][ind0:ind1+1], \
+                        s=site_size, color=cs[layer_type],linewidth=0)
+        if edge_cut is None:
+            for i in self.site_ids_edge:
+                ax.scatter(self.coords[:,0][self.site_ids_edge[i][0]:self.site_ids_edge[i][1]+1],\
+                            self.coords[:,1][self.site_ids_edge[i][0]:self.site_ids_edge[i][1]+1],\
+                            s = site_size+50, color='purple', marker='*', linewidth=0)
+        else:
+            edge_site_ids = self.edge_site_ids_by_distance(edge_cut)
+            ax.scatter(self.coords[:,0][edge_site_ids], self.coords[:,1][edge_site_ids],\
+                            s = site_size+50, color='purple', marker='*', linewidth=0)
+        ax.set_aspect('equal')
+
+class RoundDisk(_MethodsHamilt, _LayeredStructMethods, _Output):
     def make_structure(self, R, rotation_angle=30., a=2.456, h=3.461, overlap='hole', rm_dangling=True):
         """
         Class for constructing bilayer graphene and collecting all neighbors of a given site by distance.
@@ -94,14 +257,15 @@ class Structure(_Methods):
         self.rotation_angle = rotation_angle
         self.rm_dangling = rm_dangling
         b = a/np.sqrt(3.)
-        va_bottom = np.array([a*np.cos(30.*pi/180.), -a*np.sin(30.*pi/180.)])
-        vb_bottom = np.array([a*np.cos(30.*pi/180.), a*np.sin(30.*pi/180.)])
+        va_bottom = np.array([a*np.cos(30.*np.pi/180.), -a*np.sin(30.*np.pi/180.)])
+        vb_bottom = np.array([a*np.cos(30.*np.pi/180.), a*np.sin(30.*np.pi/180.)])
 
         va_top = rotate_on_vec(rotation_angle, va_bottom)
         vb_top = rotate_on_vec(rotation_angle, vb_bottom)
 
-        self.latt_bottom = np.array([va_bottom, vb_bottom])
-        self.latt_top = np.array([va_top, vb_top])
+        self.latt_vec_bott = np.array([va_bottom, vb_bottom])
+        self.latt_vec_top = np.array([va_top, vb_top])
+        self.layer_latt_vecs = np.array([self.latt_vec_bott, self.latt_vec_top])
         
         if overlap == 'hole':
             self.site0 = np.array([1./3., 1./3.])
@@ -118,8 +282,6 @@ class Structure(_Methods):
         else:
             raise ValueError('overlap %s can not be recognized!!' % overlap)
          
-            
-
         self.radius = R*a
         self.NN = {'1to0':tuple([[0,0],[1,0],[0,1]]), '0to1':tuple([[0,0],[-1,0],[0,-1]])}
         ## bottom vecs to three NN
@@ -213,8 +375,8 @@ class Structure(_Methods):
             elif site == 'site1':
                 site = site1
             ncell = len(cells)
-            cart_bs = np.append([frac2cart(site+cell, self.latt_bottom) for cell in cells], np.array([[0.]]*ncell), axis=1)
-            cart_ts = np.append([frac2cart(site+cell, self.latt_top) for cell in cells], np.array([[self.h]]*ncell), axis=1)
+            cart_bs = np.append([frac2cart(site+cell, self.latt_vec_bott) for cell in cells], np.array([[0.]]*ncell), axis=1)
+            cart_ts = np.append([frac2cart(site+cell, self.latt_vec_top) for cell in cells], np.array([[self.h]]*ncell), axis=1)
             return cart_bs, cart_ts
 
         coords_b1_bulk, coords_t1_bulk = get_cart_coords('site1', cells_s1_bulk)
@@ -224,6 +386,7 @@ class Structure(_Methods):
             
         self.coords = np.concatenate((coords_b0_bulk, coords_b0_edge, coords_b1_bulk, coords_b1_edge,\
                                  coords_t0_bulk, coords_t0_edge, coords_t1_bulk, coords_t1_edge), axis=0)
+
         def _get_sites(cells, sublat):
             return np.append(cells, np.array([sublat]*len(cells)).reshape(-1,1), axis=1)
         _sites_one_layer = np.concatenate([_get_sites(cells_s0_bulk, 0), _get_sites(cells_s0_edge,0),\
@@ -248,166 +411,13 @@ class Structure(_Methods):
                               'top_site0':[np.sum(nsites_group[:5]), np.sum(nsites_group[:6])-1], \
                               'top_site1':[np.sum(nsites_group[:7]), np.sum(nsites_group[:8])-1]}
 
-    def remove_top_layer(self):
-        """
-        after removing the top layer, it changes to be graphene
-        """
-        ids = self._layer_inds()[0]
-        self.coords = self.coords[0:ids[1]+1]
-        self.layer_nsites = [self.layer_nsites[0]]
-        self.layer_zcoords = [self.layer_zcoords[0]]
-        self.layer_types = [self.layer_types[0]]
 
-    def adjust_interlayer_dists(self, interlayer_dists={'AA':3.61, 'AB':3.38, 'AAtld':3.46}):
-        """
-        adjust the interlayer distances according to the inputing parameter: interlayer_dists
-        """
-        hs = interlayer_dists
-        hs['BA'] = hs['AB']
-        hs['AtldA'] = hs['AAtld']
-        hs['AtldAtld'] = hs['AA']
-        hs['BtldBtld'] = hs['AA']
-        hs['AtldBtld'] = hs['AB']
-        hs['BtldAtld'] = hs['AB']
-        hs['BB'] = hs['AA']
-        ids = self._layer_inds()
-        ids_sort = np.argsort(self.layer_zcoords)
-        zs = [0.]
-        for i in range(1,len(ids_sort)):
-            ind = ids_sort[i]
-            ind0 = ids_sort[i-1]
-            stack = self.layer_types[ind0]+self.layer_types[ind]
-            zs.append(zs[-1]+hs[stack])
-        for i in range(len(zs)):
-            ind = ids_sort[i]
-            self.layer_zcoords[ind]=zs[i]
-            self.coords[:,-1][ids[ind][0]:ids[ind][1]+1] = zs[i]
-
-    def _coords_xy(self, layer):
-        """
-        layer: 'A', 'B', 'Atld', 'Btld'
-        """
-        xy_0 = copy.deepcopy(self.coords[:self.layer_nsites[0]][:,:-1])
-        xy_1 = copy.deepcopy(self.coords[self.layer_nsites[0]:self.layer_nsites[0]+self.layer_nsites[1]][:,:-1])
-        if layer == 'A':
-            return xy_0
-        elif layer == 'B':
-            xy_0[:,0] = xy_0[:,0] + self.a/np.sqrt(3)
-            return xy_0
-        elif layer == 'Atld':
-            return xy_1
-        elif layer == 'Btld':
-            xy_1[:,0] = xy_1[:,0] + self.a/np.sqrt(3)*np.cos(np.pi/6)
-            xy_1[:,1] = xy_1[:,1] + self.a/np.sqrt(3)*np.sin(np.pi/6)
-            return xy_1
-
-    def get_append_dict(self, stack):
-        """
-        get the append dictionary of a multilayer stack
-        as input parameter of function self.append_layers() 
-        """
-        stack = stack.replace('Atld', 'C')
-        stack = stack.replace('At', 'C')
-        stack = stack.replace('Btld', 'D')
-        stack = stack.replace('Bt', 'D')
-        for i in range(len(stack)):
-            if stack[i]=='A' and stack[i+1]=='C':
-                ind = i
-                break
-        ids = np.array(range(len(stack))) - ind
-        append = {}
-        for i in range(len(stack)):
-            if i in [ind, ind+1]:
-                continue
-            layer = stack[i]
-            if layer == 'C':
-                layer_ = 'Atld'
-            elif layer == 'D':
-                layer_ = 'Btld'
-            else:
-                layer_ = layer
-            try:
-                append[layer_].append(ids[i])
-            except:
-                append[layer_] = [ids[i]]
-        return append
-
-    def append_layers(self, layers):
-        """
-        A (bottom) and Atld (top) layers already exist at 0 and 1*
-
-        layers: a dict info for the appended layers {layer: positions list ...}
-                B|A bilayer has AB stacking 
-                A|Atld bilayers has 30 degree twist angle
-        such as {'A': [-1, -3], 'B':[-2, -4], 'Atld':[2, 4], 'Btld':[3,5]}
-            
-             at -1*h and -3*h  add A layers 
-                -2*h and -4*h  add B layers
-                2*h and 4*h add Atld layers
-                3*h and 5*h add Btld layers
-        """
-
-        for layer in layers:
-            coord_xy = self._coords_xy(layer)
-            nsite = len(coord_xy)
-            for i in layers[layer]:
-                z = self.h*i
-                coord = np.concatenate((coord_xy, [[z]]*nsite), axis=1)
-                self.coords = np.concatenate((self.coords, coord), axis=0)
-                self.layer_nsites.append(nsite)
-                self.layer_zcoords.append(z)
-                self.layer_types.append(layer)
-
-    def add_hopping_pz(self, split=False, max_dist=5.0, g0=3.12, a0=1.42, g1=0.48, h0=3.349, \
-                                     rc=6.14, lc=0.265, q_dist_scale=2.218, nr_processes=1):
-        from tBG.hopping import hop_func_pz 
-        hop_func = hop_func_pz(g0=g0, a0=a0, g1=g1, h0=h0, rc=rc, lc=lc, q_dist_scale=q_dist_scale)
-
-        if split:
-            nlayer = len(self.layer_nsites)
-            layid_sorted = np.argsort(self.layer_zcoords)
-            layer_inds = self._layer_inds()
-
-            def collect_layer_data(lay_id):
-                id_range = layer_inds[lay_id]
-                sites = self.coords[id_range[0]:id_range[1]+1]
-                bins = divide_sites_2D(sites, bin_box=[[max_dist,0],[0,max_dist]], idx_from=id_range[0])
-                return sites, bins
-
-            ## intralayer hopping
-            for i in range(nlayer):
-                lay_id = layid_sorted[i]
-                sites, bins = collect_layer_data(lay_id)
-                key, value = calc_hoppings(sites, bins, hop_func=hop_func, max_dist=max_dist, nr_processes=nr_processes)
-                try:
-                    keys = np.concatenate([keys, key], axis=0)
-                    values = np.concatenate([values, value], axis=0)
-                except:
-                    keys = key
-                    values = value
-
-            ## interlayer hopping
-            for i in range(nlayer-1):
-                lay0_id = layid_sorted[i]
-                site0s, bin0s = collect_layer_data(lay0_id)
-
-                lay1_id = layid_sorted[i+1]
-                site1s, bin1s = collect_layer_data(lay1_id)
-
-                key, value = calc_hoppings(site0s, bin0s, site1s, bin1s, hop_func=hop_func, max_dist=max_dist, nr_processes=nr_processes)
-
-                keys = np.concatenate([keys, key], axis=0)
-                values = np.concatenate([values, value], axis=0)
-        else:
-            sites = self.coords
-            bins = divide_sites_2D(sites, bin_box=[[max_dist,0],[0,max_dist]], idx_from=0)
-            keys, values = calc_hoppings(sites, bins, hop_func=hop_func, max_dist=max_dist, nr_processes=nr_processes)
-        self.hopping = keys, values
-
-    def add_hopping_wannier(self, max_dist=6.0, P=0, \
+    def add_hopping_wannier_divide(self, max_dist=6.0, P=0, \
                             ts=[-2.8922, 0.2425, -0.2656, 0.0235, \
                               0.0524,  -0.0209, -0.0148, -0.0211], nr_processes=1):
         """
+              NOTE:  ***** only for round disk not for other quantum dots *****
+
         max_dist: the interlayer hopping will be add if C-C distance less than max_dist
         lambda0,3,6, xi0,3,6 k0,6 and x3,6 are the params for interlayer hopping 
         ts: the hopping energies for the first 8-nearest neighbors for intralayer 
@@ -464,6 +474,7 @@ class Structure(_Methods):
                 keys = keys_one_layer
                 values = values_one_layer
 
+
         ## inter-layer hopping (only between nearest layers)
         def collect_sublatt_data(lay_id, sublatt):
             id_range = layer_inds_sublatt[lay_id][sublatt]
@@ -489,7 +500,7 @@ class Structure(_Methods):
                     keys = np.concatenate([keys, key], axis=0)
                     values = np.concatenate([values, value], axis=0)
         self.hopping = keys, values 
-
+    
 
     def edge_site_ids_by_distance(self, dist_to_edge=5.):
         """
@@ -499,113 +510,6 @@ class Structure(_Methods):
         ids = np.where(np.linalg.norm(coords, axis=1)>self.radius-dist_to_edge)[0]    
         return ids
 
-    def output_Lammps_struct_file(self, atom_style='full'):
-        """
-        atom_style: 'full' or 'atomic' which determine the format of the
-                     atom part in data file
-        atoms in different layers were given differen atom_type and molecule-tag
-        """
-        from tools_lammps import write_lammps_datafile
-        n_atom = np.sum(self.layer_nsites)
-        n_atom_type = len(self.layer_zcoords)
-        mass = [12.0107]*n_atom_type
-
-        a = [min(self.coords[:,0])-100, max(self.coords[:,0])+100]
-        b = [min(self.coords[:,1])-100, max(self.coords[:,1])+100]
-        c = [min(self.coords[:,2])-100, max(self.coords[:,2])+100]
-        box = [a, b, c]
-        tilts = [0, 0, 0]
-
-        atom_id = range(1, n_atom+1)
-        atom_type = np.concatenate([[i]*self.layer_nsites[i-1] for i in range(1, n_atom_type+1)])
-        molecule_tag = atom_type
-        q = [0.0] * n_atom
-        write_lammps_datafile(box, atom_id, self.coords, n_atom, n_atom_type, mass, atom_type, atom_style=atom_style, \
-                              tilts=tilts, qs=q, molecule_tag=molecule_tag)
-
-    def save_to(self, fname='struct'):
-        out={}
-        hop_keys, hop_vals = self.hopping
-        out['hopping_parameters'] = self.hopping_parameters
-        np.savez_compressed(fname, coords=self.coords, hop_keys=hop_keys, hop_vals=hop_vals, info=[out])
-    
-    def _layer_inds(self):
-        layer_inds = []
-        for i in range(len(self.layer_nsites)):
-            ind0 = sum(self.layer_nsites[:i])
-            ind1 = ind0 + self.layer_nsites[i]-1
-            layer_inds.append([ind0,ind1])
-        return layer_inds
-
-    def _layer_inds_sublatt(self):
-        layer_inds = self._layer_inds()
-        layer_nsite_sublatt = self.layer_nsites_sublatt
-        out = [[[],[]] for _ in range(len(layer_inds))]
-        for i in range(len(layer_inds)):
-            out[i][0] = [layer_inds[i][0],layer_inds[i][0]+layer_nsite_sublatt[i][0]-1]
-            out[i][1] = [layer_inds[i][0]+layer_nsite_sublatt[i][0],layer_inds[i][1]]
-        return out
-
-    def _plot_stack(self, fname='stack'):
-        from matplotlib import pyplot as plt
-        z_min = min(self.layer_zcoords)
-        z_max = max(self.layer_zcoords)
-        scale = self.h
-        for i in range(len(self.layer_zcoords)):
-            z = self.layer_zcoords[i]/scale
-            label = self.layer_types[i]
-            if 'tld' in label:
-                label = '$\widetilde{' + label[0]+'}$'
-            else:
-                label = '$'+label+'$'
-            plt.plot([0, 0.5], [z, z], color='black', linewidth=2.0)
-            plt.text(0.52, z, label, verticalalignment='center', horizontalalignment='left', fontsize=20)
-        plt.xlim((0,1.0))
-        plt.ylim((z_min/scale-2, z_max/scale+2))
-        plt.axis('off')
-        plt.savefig(fname+'.pdf')
-        plt.clf()
-
-    def plot(self, fname='BiGraphene.pdf',site_size=3.0, dpi=600, lw=0.6, edge_cut=None):
-        import matplotlib.pyplot as plt
-        import matplotlib.collections as mc
-        fig, ax = plt.subplots()
-        nsites = len(self.coords)
-        cs = {'A':'black', 'Atld':'red', 'B':'grey', 'Btld':'orange'}
-        layer_inds = self._layer_inds()
-        layer_hops = [[] for _ in range(len(self.layer_nsites))]
-        for pair, hop in zip(self.hopping[0], self.hopping[1]):
-            i,j = pair
-            for k in range(len(layer_inds)):
-                ind0,ind1 = layer_inds[k]
-                if ind0<=i<=ind1 and ind0<=j<=ind1:
-                    layer_hops[k].append([self.coords[i][:2],self.coords[j][:2]])
-        for i in np.array(self.layer_zcoords).argsort():
-            layer_type = self.layer_types[i]
-            ind0,ind1 = layer_inds[i]
-            line = mc.LineCollection(layer_hops[i], [0.1]*len(layer_hops[i]),colors=cs[layer_type], lw=lw)
-            ax.add_collection(line)
-            plt.draw()
-            plt.scatter(self.coords[:,0][ind0:ind1+1], self.coords[:,1][ind0:ind1+1], \
-                        s=site_size, color=cs[layer_type],linewidth=0)
-        if edge_cut is None:
-            for i in self.site_ids_edge:
-                plt.scatter(self.coords[:,0][self.site_ids_edge[i][0]:self.site_ids_edge[i][1]+1],\
-                            self.coords[:,1][self.site_ids_edge[i][0]:self.site_ids_edge[i][1]+1],\
-                            s = site_size+50, color='purple', marker='*', linewidth=0)
-        else:
-            edge_site_ids = self.edge_site_ids_by_distance(edge_cut)
-            plt.scatter(self.coords[:,0][edge_site_ids], self.coords[:,1][edge_site_ids],\
-                            s = site_size+50, color='purple', marker='*', linewidth=0)
-                
-                    
-            
-        ax.set_aspect('equal')
-        plt.axis('equal')
-        plt.axis('off')
-        #plt.draw()
-        plt.savefig(fname, bbox_inches='tight', dpi=dpi)
-        plt.close()
 
 ################# below for tipsi sample ###########
 def siteset(nsite):
