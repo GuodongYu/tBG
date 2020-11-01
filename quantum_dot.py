@@ -2,7 +2,8 @@ import numpy as np
 import copy
 from functools import reduce
 from tBG.utils import frac2cart, cart2frac, rotate_on_vec, mirror_operate_2d, angle_between_vec_x
-from tBG.round_disk import Structure
+from tBG.round_disk import RoundDisk, _MethodsHamilt, _Output
+from tBG.periodic_structures import _LayeredStructMethods
 
 #### geometry functions ####
 def get_interaction_two_lines(line1, line2):
@@ -77,30 +78,6 @@ def filter_sites_inside_polygon(coords, sides):
     return coords[inds]      
 ######################################################################################
 
-class _MethodsHamilt:
-    def get_Hamiltonian(self):
-        ndim = len(self.coords)
-        H = np.zeros((ndim,ndim), dtype=float)
-        def put_value(pair, t):
-            H[pair[0],pair[1]] =  t
-            H[pair[1],pair[0]] =  t
-        pairs, ts = self.hopping
-        tmp = [put_value(pairs[i], ts[i]) for i in range(len(ts))]
-        return H
-
-    def get_current_mat(self):
-        c = 1.0
-        ndim = len(self.coords)
-        jx = np.zeros((ndim,ndim), dtype=float)
-        jy = np.zeros((ndim,ndim), dtype=float)
-        jz = np.zeros((ndim,ndim), dtype=float)
-        def put_value(pair, t):
-            rij = self.coords[pair[0]]-self.coords[pair[1]]
-            jx[pair[0],pair[1]], jy[pair[0],pair[1]], jz[pair[0],pair[1]] =  rij*t
-            jx[pair[1],pair[0]], jy[pair[1],pair[0]], jz[pair[1],pair[0]] =  -rij*t
-        pairs, ts = self.hopping
-        tmp = [put_value(pairs[i], ts[i]) for i in range(len(ts))]
-        return c*np.array([jx, jy, jz])
 
 class _SymmetryOperate:
 
@@ -295,18 +272,42 @@ class _GemetryOperate:
         nsite_unrott = len(np.where(self.coords[:,2]==0.)[0])
         nsite_rott = len(np.where(self.coords[:,2]>0.)[0])
         return [nsite_unrott, nsite_rott]        
+
+    def get_layer_nsites_sublatt(self):
+        def get_nsites_sublatt_onelayer(coords, latt_vec):
+            fracs = cart2frac(coords[:,0:2], latt_vec)
+            fracs_site0 = np.float16(self.site0 - fracs)
+            fracs_redu = np.modf(fracs_site0)[0] 
+            ind_0 = np.where(fracs_redu[:,0]==0.)[0] 
+            ind_1 = np.where(fracs_redu[:,1]==0.)[0] 
+            n0 = len(np.intersect1d(ind_0, ind_1))
+            n1 = len(fracs) - n0
+            return n0, n1
+        layer_nsites = self.get_layer_nsites()
+        coords_bott = self.coords[:layer_nsites[0]]
+        coords_top = self.coords[layer_nsites[0]:]
+        nb0,nb1= get_nsites_sublatt_onelayer(coords_bott, self.layer_latt_vecs[0])
+        nt0,nt1= get_nsites_sublatt_onelayer(coords_top, self.layer_latt_vecs[1])
+        return [[nb0, nb1],[nt0,nt1]]
     
     def _initial_round_disk(self, R, twist_angle, overlap='hole', rm_single_bond=False):
         """
         prepare a big initial round disk for cutting to get various shapes
         """
-        self.make_structure(R, rotation_angle=twist_angle, a=self.a, h=self.h, \
+        rd = RoundDisk()
+        rd.make_structure(R, rotation_angle=twist_angle, a=self.a, h=self.h, \
                                   overlap=overlap, rm_dangling=rm_single_bond)
         self.twist_angle = twist_angle
+        self.coords = rd.coords
+        self.latt_vec_bott = rd.latt_vec_bott
+        self.latt_vec_top = rd.latt_vec_top
+        self.layer_latt_vecs = rd.layer_latt_vecs
+        self.site0 = rd.site0
+        self.site1 = rd.site1
     
     def _remove_single_bonds(self):
         while True:
-            pmg_st = self.pmg_struct()
+            pmg_st = self.pymatgen_struct()
             bonds = pmg_st.get_neighbor_list(2.0)[0]
             counts = np.array([np.count_nonzero(bonds==i) for i in range(len(self.coords))])
             inds_rm = np.where(counts<=1)[0]
@@ -315,24 +316,6 @@ class _GemetryOperate:
             self.layer_nsites = self.get_layer_nsites()
             if not len(inds_rm):
                 break
-
-    def pmg_molecule(self):
-        from pymatgen.core.structure import Molecule
-        nsite = len(self.coords)
-        molecu = Molecule(['C']*nsite, self.coords)
-        return molecu
-    
-    def pmg_struct(self):
-        from pymatgen.core.structure import Structure
-        coords = copy.deepcopy(self.coords)
-        xmin, ymin, _ = np.min(coords, axis=0)
-        xmax, ymax, _ = np.max(coords, axis=0)
-        coords[:,0] = coords[:,0]-xmin+20
-        coords[:,1] = coords[:,1]-ymin+20
-        coords[:,2] = coords[:,2]+8
-        nsite = len(coords)
-        latt = [[xmax-xmin+40,0,0],[0,ymax-ymin+40,0],[0,0,20]]
-        return Structure(latt, ['C']*nsite, coords, coords_are_cartesian=True)
 
 def symmetry_operations(point_group):
     """
@@ -369,7 +352,8 @@ class _Disorder:
         indices = np.setdiff1d(range(natom), indices_vac)
         self.coords = self.coords[indices]
 
-class QuantumDot(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate, _Disorder):
+class QuantumDot(_MethodsHamilt, _GemetryOperate, _SymmetryOperate, \
+                 _Disorder,_LayeredStructMethods, _Output):
     """
     the class for a quantum dot of common twisted bilayer graphene
     x axis is always along one C2 axis (perpendicular to the primitive axis)
@@ -383,15 +367,20 @@ class QuantumDot(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate, _
         get the 1st 2-fold axis, which is described by a vector [x, y]
         """
         if self.orient == 'armchair':
-            vec = self.latt_bottom[0]+self.latt_bottom[1]
+            vec = self.latt_vec_bott[0]+self.latt_vec_bott[1]
         elif self.orient == 'zigzag':
-            vec = self.latt_bottom[0]
+            vec = self.latt_vec_bott[0]
         vec = vec/np.linalg.norm(vec)
         return self.twist_angle/2 + angle_between_vec_x(vec)
 
     def rotate_struct_axis0_to_x_axis(self):
         angle_axis0_x = self._angle_C2_axis0_x()
         self.coords = rotate_on_vec(-angle_axis0_x, self.coords)
+        layer_latt_vecs = []
+        for i in range(len(self.layer_latt_vecs)):
+            latt_vec_new = rotate_on_vec(-angle_axis0_x, self.layer_latt_vecs[i])
+            layer_latt_vecs.append(latt_vec_new)
+        self.layer_latt_vecs = layer_latt_vecs
 
     def rectangle(self, w, h, twist_angle, overlap='side_center', rm_single_bond=True, new_cut_style=False):
         if overlap not in ['side_center', 'hole']:
@@ -423,6 +412,8 @@ class QuantumDot(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate, _
         if rm_single_bond:
             self._remove_single_bonds()
         self.point_group = self.get_point_group()
+        self.layer_nsites = self.get_layer_nsites()
+        self.layer_nsites_sublatt = self.get_layer_nsites_sublatt()
         
     def regular_polygon(self, n, R, twist_angle, overlap='hole', rm_single_bond=True, \
                          orient='armchair', new_cut_style=False):
@@ -466,12 +457,15 @@ class QuantumDot(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate, _
             coords_top = rotate_on_vec(twist_angle, coords_bottom)
             coords_top[:,-1] = self.h
             self.coords = np.concatenate([coords_bottom, coords_top]) 
+        self.layer_nsites = self.get_layer_nsites()
+        self.layer_nsites_sublatt = self.get_layer_nsites_sublatt()
             
         ########################################################################################
 
-        self.layer_nsites = self.get_layer_nsites()
         if rm_single_bond:
             self._remove_single_bonds()
+        self.layer_nsites = self.get_layer_nsites()
+        self.layer_nsites_sublatt  = self.get_layer_nsites_sublatt()
         self.point_group = self.get_point_group()
 
     def get_point_group(self):
@@ -487,7 +481,8 @@ class QuantumDot(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate, _
                 return 'D6'
 
 
-class QuantumDotQC(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate, _Disorder):
+class QuantumDotQC(_MethodsHamilt, _GemetryOperate, _SymmetryOperate, \
+                   _Disorder,_LayeredStructMethods, _Output):
     """
     A quantum dot of 30 degree twisted bilayer graphene with rotation center at the hole of two layers
     x axis: armchair direction of bottom layer and zigzag direction of the top layer
@@ -505,9 +500,10 @@ class QuantumDotQC(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate,
         # get atoms inside polygon 
         self.coords = filter_sites_inside_polygon(self.coords, sides)
         ########################################################################################
-        self.layer_nsites = self.get_layer_nsites()
         if rm_single_bond:
             self._remove_single_bonds()
+        self.layer_nsites = self.get_layer_nsites()
+        self.layer_nsites_sublatt = self.get_layer_nsites_sublatt()
         if n in [3, 6]:
             self.point_group = 'C%iv' % n
         if n == 12:
@@ -519,7 +515,8 @@ class QuantumDotQC(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate,
         self.point_group = 'D6d'
         self.nfold = 6
 
-class QuantumDotAB(Structure, _MethodsHamilt, _GemetryOperate, _SymmetryOperate,_Disorder):
+class QuantumDotAB(_MethodsHamilt, _GemetryOperate, _SymmetryOperate,_Disorder,\
+                   _LayeredStructMethods, _Output):
     def __init__(self, a=2.46, h=3.35):
         QuantumDot.__init__(self, a=a, h=h)
 
