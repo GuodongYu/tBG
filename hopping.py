@@ -208,43 +208,67 @@ def hop_list_graphene_wannier(ts=[-2.8922, 0.2425, -0.2656, 0.0235, \
     hop[0][(-1, 0, 1)]= ts[0] 
     hop[0][(0, -1, 1)]= ts[0] 
     hop[0][(0, 0, 1) ]= ts[0] 
-    hop[0][(0, -1, 0)]= ts[1] 
-    hop[0][(-1, 1, 0)]= ts[1] 
-    hop[0][(-1, 0, 0)]= ts[1] 
-    hop[0][(-1, -1, 1)]= ts[2] 
-    hop[0][(1, -1, 1)]= ts[2]
-    hop[0][(-1, 1, 1)]= ts[2]
-    hop[0][(0, -2, 1)]= ts[3] 
-    hop[0][(-2, 1, 1)]= ts[3]
-    hop[0][(-2, 0, 1)]= ts[3]
-    hop[0][(1, -2, 1)]= ts[3]
-    hop[0][(1, 0, 1)]= ts[3]
-    hop[0][(0, 1, 1)]= ts[3]
-    hop[0][(-1, -1, 0)]= ts[4] 
-    hop[0][(-2, 1, 0)]= ts[4]
-    hop[0][(1, -2, 0)]= ts[4]
-    hop[0][(0, -2, 0)]= ts[5] 
-    hop[0][(-2, 2, 0)]= ts[5] 
-    hop[0][(-2, 0, 0)]= ts[5] 
-    hop[0][(-1, -2, 1)]= ts[6] 
-    hop[0][(-2, -1, 1)]= ts[6]
-    hop[0][(-2, 2, 1)]= ts[6]
-    hop[0][(2, -1, 1)]= ts[6]
-    hop[0][(2, -2, 1)]= ts[6]
-    hop[0][(-1, 2, 1)]= ts[6]
-    hop[0][(-3, 1, 1)]= ts[7] 
-    hop[0][(1, -3, 1)]= ts[7]
-    hop[0][(1, 1, 1)]= ts[7]
+    try:
+        hop[0][(0, -1, 0)]= ts[1] 
+        hop[0][(-1, 1, 0)]= ts[1] 
+        hop[0][(-1, 0, 0)]= ts[1] 
+    
+        hop[1][(0, -1, 1)]= ts[1]
+        hop[1][(-1, 1, 1)]= ts[1]
+        hop[1][(-1, 0, 1)]= ts[1]
+    except:
+        return hop
+    try:
+        hop[0][(-1, -1, 1)]= ts[2] 
+        hop[0][(1, -1, 1)]= ts[2]
+        hop[0][(-1, 1, 1)]= ts[2]
+    except:
+        return hop
+    try:
+        hop[0][(0, -2, 1)]= ts[3] 
+        hop[0][(-2, 1, 1)]= ts[3]
+        hop[0][(-2, 0, 1)]= ts[3]
+        hop[0][(1, -2, 1)]= ts[3]
+        hop[0][(1, 0, 1)]= ts[3]
+        hop[0][(0, 1, 1)]= ts[3]
+    except:
+        return hop
+    try:
+        hop[0][(-1, -1, 0)]= ts[4] 
+        hop[0][(-2, 1, 0)]= ts[4]
+        hop[0][(1, -2, 0)]= ts[4]
 
-    hop[1][(0, -1, 1)]= ts[1]
-    hop[1][(-1, 1, 1)]= ts[1]
-    hop[1][(-1, 0, 1)]= ts[1]
-    hop[1][(-1, -1, 1)]= ts[4]
-    hop[1][(-2, 1, 1)]= ts[4]
-    hop[1][(1, -2, 1)]= ts[4]
-    hop[1][(0, -2, 1)]= ts[5]
-    hop[1][(-2, 2, 1)]= ts[5]
-    hop[1][(-2, 0, 1)]= ts[5]
+        hop[1][(-1, -1, 1)]= ts[4]
+        hop[1][(-2, 1, 1)]= ts[4]
+        hop[1][(1, -2, 1)]= ts[4]
+    except:
+        return hop
+    try:
+        hop[0][(0, -2, 0)]= ts[5] 
+        hop[0][(-2, 2, 0)]= ts[5] 
+        hop[0][(-2, 0, 0)]= ts[5] 
+
+        hop[1][(0, -2, 1)]= ts[5]
+        hop[1][(-2, 2, 1)]= ts[5]
+        hop[1][(-2, 0, 1)]= ts[5]
+    except:
+        return hop
+    try:
+        hop[0][(-1, -2, 1)]= ts[6] 
+        hop[0][(-2, -1, 1)]= ts[6]
+        hop[0][(-2, 2, 1)]= ts[6]
+        hop[0][(2, -1, 1)]= ts[6]
+        hop[0][(2, -2, 1)]= ts[6]
+        hop[0][(-1, 2, 1)]= ts[6]
+    except:
+        return hop
+    try:
+        hop[0][(-3, 1, 1)]= ts[7] 
+        hop[0][(1, -3, 1)]= ts[7]
+        hop[0][(1, 1, 1)]= ts[7]
+    except:
+        return hop
+
     return hop
 
 def calc_hoppings(site0s, bin0s, site1s=[], bin1s={}, hop_func=hop_func_pz(), max_dist=5.0, nr_processes=1):
@@ -280,6 +304,10 @@ def calc_hoppings(site0s, bin0s, site1s=[], bin1s={}, hop_func=hop_func_pz(), ma
         site1s = site0s
         hop_type = 'intra'
         neighs = [(1,0), (0,1), (1,1), (1,-1)]
+    ## hop_type of intra and inter does not mean interlayer or intralayer
+    ## inter means that there are two parts of the system, we just want to get the hopping between them
+    ## intra means that there is only one part of the system, we want to get the hopping within it
+    ## in any case, the system are divided into small bins.
     
     def hops_within_bin(bin0):
         """
@@ -336,13 +364,18 @@ def calc_hoppings(site0s, bin0s, site1s=[], bin1s={}, hop_func=hop_func_pz(), ma
             return np.empty((0,2), dtype=int), []
     
     def add_hop_bins(bins0, conn=False):
+        ## bin0 and its neighbor bins
         out = [hops_with_neighs(bin0) for bin0 in bins0]
-        keys = np.concatenate([i[0] for i in out])
+        keys = np.concatenate([i[0] for i in out]) 
         values = np.concatenate([i[1] for i in out])
         if hop_type == 'intra':
+            ## within bin0
             out_intra = [hops_within_bin(bin0) for bin0 in bins0]
-            keys = np.concatenate([i[0] for i in out_intra])
-            values = np.concatenate([i[1] for i in out_intra])
+            keys_intra = np.concatenate([i[0] for i in out_intra])
+            values_intra = np.concatenate([i[1] for i in out_intra])
+            ## intra case includes hoppings between bin0 and its neighbors and hoppings within bin0
+            keys = np.append(keys, keys_intra, axis=0)
+            values = np.append(values, values_intra, axis=0)
         if conn:
             conn.send((keys, values))
             return
@@ -555,6 +588,107 @@ def calc_hopping_wannier_PBC(pmg_struct, layer_inds, layer_vec_to_NN, latt_cont_
                 ends = point_inds[ids]
                 diff_vecs = offsets[ids]
                 r0s = coords[begs]
+                r1s = np.append(np.matmul(diff_vecs, latt_vec), [[0.]]*len(ids), axis=1) + coords[ends]
+                ends_with_offset = [tuple(k) for k in np.append(diff_vecs, ends.reshape(-1,1), axis=1)]
+                hop_func = hop_func_wannier_interlayer(veci_to_NN, vecj_to_NN, lambda0, xi0, k0, \
+                                                                lambda3, xi3, x3, lambda6, xi6, x6, k6, a)
+                t_hops = hop_func(r0s, r1s)
+                tmp = [hop[begs[ii]].update({ends_with_offset[ii]:t_hops[ii]}) for ii in range(len(begs))]
+                del tmp
+    return hop
+
+def calc_hopping_wannier_PBC_new(pmg_struct, layer_inds, layer_inds_sublatt, layer_vec_to_NN, max_dist=5.0, P=0,\
+                                ts=[-2.8922, 0.2425, -0.2656, 0.0235, 0.0524, -0.0209, -0.0148, -0.0211], a=2.46):
+    """
+    add hoppings to graphene multilayer or approximant of graphene multilayer quasicrystal
+
+    intra-layer and inter-layer hopping are splited 
+    intra-layer hopping: ts list for N(=len(ts))-nearest neighbor hoppings
+    inter-layer hopping: a hopping function with C-C distance cutoff, which depends on the C-C distance and relative orentations
+
+    args:
+        pmg_struct: the instance of pymatgen.core.structure.Structure
+        layer_inds: the ind range of all layers. return of tBG.TBG30_approximant.structure.Structure._layer_inds() 
+        layer_vec_to_NN: the vecs to nearest neighbors of sublattice in each layer [[vec0, vec1]...]
+        latt_cont_max: the max of self.a and self.a_top of instance of tBG.TBG30_approximant.structure.Structure
+        max_dist: the distance cutoff for inter-layer hopping
+        P: the pressure for getting the hopping parameters inter-layer
+        ts: the hopping list for intra-layer hopping. default: the 8-nearest neighbor hopping
+        a: the graphene lattice constant to reduce the inter-atom distance between layers         
+    """
+    def get_neighbor_shells_intralayer(filtered_neigh_list, n_neigh=8, precision=3):
+        a, b, c, d = filtered_neigh_list
+        c = np.array(c, dtype=int)
+        d = np.array([round(i,precision) for i in d])
+        dist_shells = np.unique(d)
+        r_cut = dist_shells[n_neigh-1]
+        dist_shells = dist_shells[:n_neigh]
+        ids = np.where(d<=r_cut)[0]
+        a, b, c, d = a[ids], b[ids], c[ids], d[ids]
+        c = np.append(c, b.reshape(-1,1), axis=1)
+        c = [tuple(i) for i in c]
+        out = {i:{j:[] for j in dist_shells} for i in a}
+        tmp = [out[a[i]][d[i]].append(c[i]) for i in range(len(a))]
+        del tmp
+        return out, dict(zip(dist_shells, range(len(dist_shells))))
+
+    dist_to = max([5.94, max_dist]) # 5.94 is around the mean between 8th- and 9th-nearest neighbors length
+    from functools import reduce
+    ng_list = pmg_struct.get_neighbor_list(dist_to)
+    center_inds, point_inds, offsets, dists = ng_list
+    offsets = np.array(offsets[:,:-1], dtype=int)
+    coords = pmg_struct.cart_coords
+    nsite = pmg_struct.num_sites
+    latt_vec = pmg_struct.lattice.matrix[0:2][:,0:2]
+    hop = [{} for _ in range(nsite)]
+    nlayer = len(layer_inds)
+    #### calc intralayer hopping ####
+    for layi in range(nlayer):
+        id0, id1 = layer_inds[layi]
+        ids = reduce(np.intersect1d, (np.where(center_inds>=id0)[0], np.where(center_inds<=id1)[0],\
+                                      np.where(point_inds>=id0)[0], np.where(point_inds<=id1)[0]))
+        beg, end, diff, dist = center_inds[ids], point_inds[ids], offsets[ids], dists[ids]
+        dist = np.array([round(i,3) for i in dist])
+        filtered_ng_list = filter_neig_list([beg, end, diff, dist])
+        ng_shells, dist_shells = get_neighbor_shells_intralayer(filtered_ng_list, n_neigh=len(ts), precision=3)
+        # ng_shells = {ind_begin:{NN_dist:[all end_inds ]}}
+        # dist_shells = {1.46:0, 2.46:1 ....} pair of dist to which nth nearest neighbor
+        #    such as 1.46 is the 0th NN, 2.46 1st NN
+        def hop_put_intra(i,j,k):
+            hop[i][k] = ts[dist_shells[j]]
+        [hop_put_intra(i,j,k) for i in ng_shells for j in ng_shells[i] for k in ng_shells[i][j]]
+        #for i in ng_shells:
+        #    for j in ng_shells[i]:
+        #        for k in ng_shells[i][j]:
+        #            hop[i][k] = ts[dist_shells[j]]
+
+    #### calc interlayer hopping ####
+    ids_dist = np.where(dists<=max_dist)[0]
+    lambda0, xi0, k0, lambda3, xi3, x3, lambda6, xi6, x6, k6= \
+                                       hop_params_wannier_interlayer(P)
+    def get_ids_sublatt(lay_id, site_inds):
+        ids_0, ids_1 = layer_inds_sublatt[lay_id]
+        ids_sub0 = np.intersect1d(np.where(site_inds>=ids_0[0])[0], np.where(site_inds<=ids_0[1])[0])
+        ids_sub1 = np.intersect1d(np.where(site_inds>=ids_1[0])[0], np.where(site_inds<=ids_1[1])[0])
+        return ids_sub0, ids_sub1
+        
+    for layi in range(nlayer-1):
+        layj = layi + 1
+        ids_layi = get_ids_sublatt(layi, center_inds)
+        ids_layj = get_ids_sublatt(layj, point_inds)
+        for i in [0,1]:
+            ids_i = ids_layi[i]
+            veci_to_NN = layer_vec_to_NN[layi][i]
+            for j in [0,1]:
+                ids_j = ids_layj[j]
+                vecj_to_NN = layer_vec_to_NN[layj][j]
+                #begin is layi[i] sublatt, end is layj[j] sublatt with distance less than max_dist
+                ids = reduce(np.intersect1d, (ids_i, ids_j, ids_dist))                
+
+                begs = center_inds[ids]
+                ends = point_inds[ids]
+                diff_vecs = offsets[ids]
+                r0s = coords[begs] 
                 r1s = np.append(np.matmul(diff_vecs, latt_vec), [[0.]]*len(ids), axis=1) + coords[ends]
                 ends_with_offset = [tuple(k) for k in np.append(diff_vecs, ends.reshape(-1,1), axis=1)]
                 hop_func = hop_func_wannier_interlayer(veci_to_NN, vecj_to_NN, lambda0, xi0, k0, \
