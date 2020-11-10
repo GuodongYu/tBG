@@ -1,5 +1,5 @@
 import numpy as np
-import numpy.linalg as npla
+from scipy.linalg.lapack import zheev
 import json
 import time
 import sys
@@ -16,15 +16,29 @@ from tBG.hopping import SparseHopDict
 from tBG.periodic_structures import _LayeredStructMethods
 
 class _MethodsHamilt:
-    def get_Hamiltonian(self):
+    def get_Hamiltonian(self, B=0):
+        pairs, ts = self.hopping
         ndim = len(self.coords)
         H = np.zeros((ndim,ndim), dtype=float)
         def put_value(pair, t):
             H[pair[0],pair[1]] =  t
-            H[pair[1],pair[0]] =  t
-        pairs, ts = self.hopping
-        tmp = [put_value(pairs[i], ts[i]) for i in range(len(ts))]
+            H[pair[1],pair[0]] =  np.conj(t)
+        [put_value(pairs[i], ts[i]) for i in range(len(ts))]
         return H
+
+    def diag_Hamiltonian(self, fname='EIGEN', vec=True):
+        if vec:
+            vec_calc = 1
+        else:
+            vec_calc = 0
+        H = self.get_Hamiltonian()
+        vals, vecs, info = zheev(H, vec_calc)
+        if info:
+            raise ValueError('zheev failed')
+        if vec:
+            np.savez_compressed(fname, vals=vals, vecs=vecs)
+        else:
+            np.savez_compressed(fname, vals=vals)
 
     def get_current_mat(self):
         c = 1.0
@@ -37,8 +51,26 @@ class _MethodsHamilt:
             jx[pair[0],pair[1]], jy[pair[0],pair[1]], jz[pair[0],pair[1]] =  rij*t
             jx[pair[1],pair[0]], jy[pair[1],pair[0]], jz[pair[1],pair[0]] =  -rij*t
         pairs, ts = self.hopping
-        tmp = [put_value(pairs[i], ts[i]) for i in range(len(ts))]
+        [put_value(pairs[i], ts[i]) for i in range(len(ts))]
         return c*np.array([jx, jy, jz])
+
+    def get_Lz_mat(self):
+        m = 9.10956 * 10**(-31) #kg
+        hbar_eVs = 0.6582119514 *10**(-15) # eV.s
+        hbar_Js = 1.05457266 *10**(-34) #J·s
+        h_Js = 6.62607015*10**(-34)
+        c = m/(1j*hbar_eVs)/ hbar_Js * 10**(-20)
+        ndim = len(self.coords)
+        Lz = np.zeros((ndim,ndim), dtype=float)
+        def put_value(pair, t):
+            x0, y0, _ = self.coords[pair[0]] 
+            x1, y1, _ = self.coords[pair[1]] 
+            Lz[pair[0],pair[1]] =  t* (x1*y0-x0*y1)
+            Lz[pair[1],pair[0]] =  t* (x0*y1-x1*y0)
+        pairs, ts = self.hopping
+        [put_value(pairs[i], ts[i]) for i in range(len(ts))]
+        return c*Lz
+
 
     def add_hopping_pz(self, split=False, max_dist=5.0, g0=3.12, a0=1.42, g1=0.48, h0=3.349, \
                                      rc=6.14, lc=0.265, q_dist_scale=2.218, nr_processes=1):
@@ -85,6 +117,7 @@ class _MethodsHamilt:
             bins = divide_sites_2D(sites, bin_box=[[max_dist,0],[0,max_dist]], idx_from=0)
             keys, values = calc_hoppings(sites, bins, hop_func=hop_func, max_dist=max_dist, nr_processes=nr_processes)
         self.hopping = keys, values
+        self.B = 0
 
     def add_hopping_wannier(self, max_dist=6.0, P=0, \
                             ts=[-2.8922, 0.2425, -0.2656, 0.0235, \
@@ -109,8 +142,23 @@ class _MethodsHamilt:
         keys = [[i,j[-1]] for i in range(len(hopping)) for j in hopping[i]]
         values = [hopping[i][j] for i in range(len(hopping)) for j in hopping[i]]
         self.hopping = [np.array(keys), np.array(values)]
+        self.B = 0
 
-class Read:
+    def set_magnetic_field(self, B=0):
+        self.B = B
+        pairs, ts = self.hopping
+        ts_B = np.zeros(len(ts), dtype=np.complex)
+        PHI0 = 4135.666734
+        c = 1j*np.pi*B/PHI0 
+        def add_Peierls_substitution(ind):
+            x0, y0, _ = self.coords[pairs[ind][0]] 
+            x1, y1, _ = self.coords[pairs[ind][1]]
+            # 0.01 for change angstrom^2 to nanometer^2
+            ts_B[ind] =  ts[ind] * np.exp(c*(y1-y0)*(x1+x0)*0.01)
+        [add_Peierls_substitution(ind) for ind in range(len(ts))]
+        self.hopping = pairs, ts_B
+
+class _Read:
     def from_relaxed_struct_from_file(self, filename):
         """
         read the xyz file for site coords. 
@@ -193,7 +241,7 @@ class _Output:
         plt.savefig(fname+'.pdf')
         plt.clf()
 
-    def plot(self, fig, ax ,site_size=3.0, dpi=600, lw=0.6, edge_cut=None):
+    def plot(self, fig, ax ,site_size=3.0, dpi=600, lw=0.6, edge_cut=False):
         import matplotlib.collections as mc
         nsites = len(self.coords)
         cs = {'A':'black', 'Atld':'red', 'B':'grey', 'Btld':'orange'}
@@ -215,19 +263,19 @@ class _Output:
             ax.draw(renderer)
             ax.scatter(self.coords[:,0][ind0:ind1+1], self.coords[:,1][ind0:ind1+1], \
                         s=site_size, color=cs[layer_type],linewidth=0)
-        if edge_cut is None:
-            for i in self.site_ids_edge:
-                ax.scatter(self.coords[:,0][self.site_ids_edge[i][0]:self.site_ids_edge[i][1]+1],\
-                            self.coords[:,1][self.site_ids_edge[i][0]:self.site_ids_edge[i][1]+1],\
-                            s = site_size+50, color='purple', marker='*', linewidth=0)
-        else:
-            edge_site_ids = self.edge_site_ids_by_distance(edge_cut)
-            ax.scatter(self.coords[:,0][edge_site_ids], self.coords[:,1][edge_site_ids],\
-                            s = site_size+50, color='purple', marker='*', linewidth=0)
+        #if not edge_cut:
+        #    for i in self.site_ids_edge:
+        #        ax.scatter(self.coords[:,0][self.site_ids_edge[i][0]:self.site_ids_edge[i][1]+1],\
+        #                    self.coords[:,1][self.site_ids_edge[i][0]:self.site_ids_edge[i][1]+1],\
+        #                    s = site_size+50, color='purple', marker='*', linewidth=0)
+        #else:
+        #    edge_site_ids = self.edge_site_ids_by_distance(edge_cut)
+        #    ax.scatter(self.coords[:,0][edge_site_ids], self.coords[:,1][edge_site_ids],\
+        #                    s = site_size+50, color='purple', marker='*', linewidth=0)
         ax.set_aspect('equal')
 
-class RoundDisk(_MethodsHamilt, _LayeredStructMethods, _Output):
-    def make_structure(self, R, rotation_angle=30., a=2.456, h=3.461, overlap='hole', rm_dangling=True):
+class RoundDisk(_MethodsHamilt, _LayeredStructMethods, _Output, _Read):
+    def make_structure(self, R, rotation_angle=30., a=2.46, h=3.36, overlap='hole', rm_dangling=True):
         """
         Class for constructing bilayer graphene and collecting all neighbors of a given site by distance.
 
@@ -500,6 +548,7 @@ class RoundDisk(_MethodsHamilt, _LayeredStructMethods, _Output):
                     keys = np.concatenate([keys, key], axis=0)
                     values = np.concatenate([values, value], axis=0)
         self.hopping = keys, values 
+        self.B = 0
     
 
     def edge_site_ids_by_distance(self, dist_to_edge=5.):
