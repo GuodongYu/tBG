@@ -99,7 +99,6 @@ class UnfinishedJobs:
                 undo[R] = thetas
             else:
                 undo[R] =  np.array(list( set(thetas) - (set(thetas)&set(finished[R])) ))
-        print(undo)
         undo = {k:v for k,v in undo.items() if len(v)}
         return undo
 
@@ -179,7 +178,6 @@ class OutputQD:
         t0 =time.time()
         qd.add_hopping_pz(max_dist=5.0, g0=2.8, a0=1.42, g1=0.48, h0=3.35, rc=6.14, lc=0.265, q_dist_scale=2.218, nr_processes=1)
         t1 = time.time()
-        print('time for adding hopping: %s s' % (t1-t0))
         if split:
             H = qd.get_Hamiltonian()
             np.savez_compressed(os.path.join(fold, 'H_mat'), H_mat=H)
@@ -195,21 +193,17 @@ class OutputQD:
             t0 = time.time()
             H = qd.get_Hamiltonian()
             t1 = time.time()
-            print('time for getting H %s s' % (t1-t0))
             J = qd.get_current_mat()
             t2 = time.time()
-            print('time for getting J %s s' % (t2-t1))
             
             ops = qd.symmetry_operations()
             ops_np = {i:ops[i] for i in ops}
             ops_np['H_mat'] = H
             ops_np['J_mat'] = J
             t3 = time.time()
-            print('time for getting ops %s s' % (t3-t2))
     
             np.savez_compressed(os.path.join(fold, 'data'), **ops_np)
             t4 = time.time()
-            print('time for output %s s' % (t4-t3))
 
     @staticmethod
     def tBG_regular(n, R, theta, overlap, orient, rm_single_bond=True, fold='.', new_cut_style=False):
@@ -243,7 +237,6 @@ class OutputQD:
         if not os.path.isdir(fold):
             os.makedirs(fold)
         t1 = time.time()
-        print('time for preparing %s s' % (t1-t0))
         OutputQD._bilayer_output(qd, fold)
 
     @staticmethod
@@ -487,12 +480,10 @@ class MassOutput:
         Rs = np.round(Rs, 2)
         thetas = np.round(thetas, 2)
         undo = UnfinishedJobs.Rs_thetas(finished, Rs, thetas)
-        print('Running %s' % grp, undo)
         Rs_thetas = convert_undo(undo)
         if nr_processes == 1:
             output(Rs_thetas)
         else:
-            print('parent pid: %s' % os.getpid())
             div = div_groups(Rs_thetas, nr_processes)
             processes = [None for i in range(nr_processes)]
             for i, tags in enumerate(div):

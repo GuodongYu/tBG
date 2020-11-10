@@ -36,7 +36,8 @@ def with_AAtld():
         ax.tick_params(axis="y",direction="in", pad=-22, labelsize=0.)
         ax.tick_params(axis="x",direction="in", pad=-15, labelsize=0.)
         j = j + 1
-    plt.savefig('multilayer.pdf', bbox_inches='tight',pad_inches=0)
+    plt.show()
+    #plt.savefig('multilayer.pdf', bbox_inches='tight',pad_inches=0)
 
 def without_AAtld():
     fig = plt.figure()
@@ -68,6 +69,7 @@ def without_AAtld():
         ax.tick_params(axis="y",direction="in", pad=-22, labelsize=0.)
         ax.tick_params(axis="x",direction="in", pad=-15, labelsize=0.)
         j = j + 1
-    plt.savefig('multilayer.pdf', bbox_inches='tight',pad_inches=0.1)
+    plt.show()
+    #plt.savefig('multilayer.pdf', bbox_inches='tight',pad_inches=0.1)
 if __name__=='__main__':
     without_AAtld()
