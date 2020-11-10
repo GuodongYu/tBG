@@ -146,6 +146,14 @@ class _SymmetryOperate:
         ops_inds = {i:self._inds_pairs(self.coords, ops[i]) for i in ops}
         return ops_inds
 
+    def symmetryop2matrix(self, op):
+        ndim = len(self.coords)
+        M = np.zeros([ndim, ndim], dtype=np.int)
+        def put_value(i):
+            M[op[i],i] = 1
+        [put_value(i) for i in range(ndim)]
+        return M
+
     def _coords(self, coords):
         if coords is None:
             coords = copy.deepcopy(self.coords)
@@ -294,16 +302,18 @@ class _GemetryOperate:
         """
         prepare a big initial round disk for cutting to get various shapes
         """
+        self.twist_angle = twist_angle
         rd = RoundDisk()
         rd.make_structure(R, rotation_angle=twist_angle, a=self.a, h=self.h, \
                                   overlap=overlap, rm_dangling=rm_single_bond)
-        self.twist_angle = twist_angle
         self.coords = rd.coords
         self.latt_vec_bott = rd.latt_vec_bott
         self.latt_vec_top = rd.latt_vec_top
         self.layer_latt_vecs = rd.layer_latt_vecs
         self.site0 = rd.site0
         self.site1 = rd.site1
+        self.layer_zcoords = rd.layer_zcoords
+        self.layer_types = rd.layer_types
     
     def _remove_single_bonds(self):
         while True:
@@ -457,8 +467,6 @@ class QuantumDot(_MethodsHamilt, _GemetryOperate, _SymmetryOperate, \
             coords_top = rotate_on_vec(twist_angle, coords_bottom)
             coords_top[:,-1] = self.h
             self.coords = np.concatenate([coords_bottom, coords_top]) 
-        self.layer_nsites = self.get_layer_nsites()
-        self.layer_nsites_sublatt = self.get_layer_nsites_sublatt()
             
         ########################################################################################
 
@@ -489,11 +497,13 @@ class QuantumDotQC(_MethodsHamilt, _GemetryOperate, _SymmetryOperate, \
     y axis: zigzag direction of bottom layer and armchair direction of the top layer
     """
     def __init__(self, a=2.46, h=3.35):
-        QuantumDot.__init__(self, a=a, h=h)
+        self.a = a
+        self.h = h
+        #QuantumDot.__init__(self, a=a, h=h)
     
-    def regular_polygon(self, n, R, rm_single_bond=True):
+    def regular_polygon(self, n, R, overlap='hole', rm_single_bond=True):
         self.nfold = n
-        self._initial_round_disk(R+2, 30., overlap='hole')
+        self._initial_round_disk(R+2, 30., overlap=overlap)
         ######################## informations of regular polygon ###############################
         vertices = get_vertices_regular_polygon(n, self.a*(R+1.e-4))
         sides = get_sides_from_vertices(vertices)
@@ -546,4 +556,6 @@ class QuantumDotAB(_MethodsHamilt, _GemetryOperate, _SymmetryOperate,_Disorder,\
         self.layer_nsites = self.get_layer_nsites()
         if rm_single_bond:
             self._remove_single_bonds()
+        self.layer_nsites = self.get_layer_nsites()
+        self.layer_nsites_sublatt = self.get_layer_nsites_sublatt()
 
