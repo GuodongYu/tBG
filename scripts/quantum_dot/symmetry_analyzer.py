@@ -287,6 +287,7 @@ def calcu_Lz_averg(SymmeOp_label='Cn1', struct_f='struct.obj', eigen_f='EIGEN.np
             vecs_rou_irrep = vecs[rou][irrep]
             vecs_new = np.matmul(Lz_mat, vecs_rou_irrep)
             lzs_rou_irrep = [np.dot(vecs_rou_irrep[:,i].conj(), vecs_new[:,i])  for i in range(len(vecs_new[0]))]
+            #lzs_rou_irrep = np.diag(np.matmul(np.transpose(vecs_rou_irrep).conj(), vecs_new))
             lzs[rou][irrep] = np.array(lzs_rou_irrep)
     return vals, lzs, vecs
 
@@ -342,17 +343,16 @@ def check_classified_vecs_irrep(struct_f='struct.obj', eigen_f='EIGEN.npz'):
             vecs_new[:,i] = vecs_new[:,i]/vals_shot[i]
             print(np.round(vecs_new[:,i] - vecs_shot[:,i], 4).real, vals_shot[i])
         print('\n\n')
-                
-        
-                
 
 def prb_tri_lz():
     from tBG.quantum_dot import QuantumDotQC
-    
-    qc = QuantumDotQC()
-    qc.regular_polygon(3, 5, overlap='atom1')
+    #a = np.sqrt(3) 
+    a = 2.46
+    qc = QuantumDotQC(a=a)
+    qc.regular_polygon(3, 4, overlap='atom1')
     qc.remove_top_layer()
-    qc.add_hopping_pz(max_dist=2.0, g0=2.8)
+    #qc.add_hopping_pz(max_dist=2.0, g0=2.8)
+    qc.add_hopping_wannier(P=0, ts=[2.8])
     x = qc.pymatgen_struct()
     x.to('poscar','POSCAR')
     with open('struct.obj','wb') as f:
@@ -366,7 +366,7 @@ def prb_tri():
     qc = QuantumDotQC()
     qc.regular_polygon(3, 2, overlap='atom1')
     qc.remove_top_layer()
-    qc.add_hopping_pz(max_dist=2.0, g0=2.8)
+    #qc.add_hopping_pz(max_dist=2.0, g0=2.8)
     x = qc.pymatgen_struct()
     x.to('poscar','POSCAR')
     with open('struct.obj','wb') as f:
@@ -377,8 +377,8 @@ def main():
     from tBG.quantum_dot import QuantumDotQC
     
     qc = QuantumDotQC()
-    qc.regular_polygon(6, 4, overlap='hole')
-    qc.remove_top_layer()
+    qc.regular_polygon(3, 3, overlap='hole')
+    #qc.remove_top_layer()
     #qc.add_hopping_pz(max_dist=2.0, g0=2.8)
     #qc.add_hopping_pz()
     x = qc.pymatgen_struct()
@@ -391,3 +391,4 @@ def main():
 
 if __name__ == "__main__":
     prb_tri_lz()
+    #main()
