@@ -3,7 +3,6 @@ from scipy.linalg.lapack import zheev
 import json
 import time
 import sys
-import tipsi
 import copy
 from monty.json import jsanitize
 import multiprocessing as mp
@@ -12,11 +11,13 @@ import itertools
 import os
 from tBG.hopping import divide_sites_2D, calc_hoppings, hop_list_graphene_wannier, calc_hopping_wannier_PBC_new
 from tBG.utils import *
-from tBG.hopping import SparseHopDict
-from tBG.periodic_structures import _LayeredStructMethods
+from tBG.crystal.structures import _LayeredStructMethods
 
 class _MethodsHamilt:
-    def get_Hamiltonian(self, B=0):
+    def get_Hamiltonian(self):
+        """
+        Hamiltonian is in units of eV
+        """
         pairs, ts = self.hopping
         ndim = len(self.coords)
         H = np.zeros((ndim,ndim), dtype=float)
@@ -24,9 +25,16 @@ class _MethodsHamilt:
             H[pair[0],pair[1]] =  t
             H[pair[1],pair[0]] =  np.conj(t)
         [put_value(pairs[i], ts[i]) for i in range(len(ts))]
+        if self.E:
+            np.fill_diagonal(H, self.Es_onsite)
         return H
 
     def diag_Hamiltonian(self, fname='EIGEN', vec=True):
+        """
+        fname: the file saving the eigenvalues and eigenvectors
+        vec: True or False, whether eigenvectors are calculated
+        E: the electric field strength eV/Angstrom
+        """
         if vec:
             vec_calc = 1
         else:
@@ -41,35 +49,40 @@ class _MethodsHamilt:
             np.savez_compressed(fname, vals=vals)
 
     def get_current_mat(self):
-        c = 1.0
+        """
+        the matrix of current operator, in units of e*angstrom/second
+        """
+        hbar_eVs =  6.582119514*10**(-16)
+        e = 1.
+        c = e/(1j*hbar_eVs)
         ndim = len(self.coords)
-        jx = np.zeros((ndim,ndim), dtype=float)
-        jy = np.zeros((ndim,ndim), dtype=float)
-        jz = np.zeros((ndim,ndim), dtype=float)
-        def put_value(pair, t):
-            rij = self.coords[pair[0]]-self.coords[pair[1]]
-            jx[pair[0],pair[1]], jy[pair[0],pair[1]], jz[pair[0],pair[1]] =  rij*t
-            jx[pair[1],pair[0]], jy[pair[1],pair[0]], jz[pair[1],pair[0]] =  -rij*t
-        pairs, ts = self.hopping
-        [put_value(pairs[i], ts[i]) for i in range(len(ts))]
-        return c*np.array([jx, jy, jz])
-
+        H = self.get_Hamiltonian()
+        X = np.zeros([ndim, ndim])
+        np.fill_diagonal(X, self.coords[:,0])
+        Y = np.zeros([ndim, ndim])
+        np.fill_diagonal(Y, self.coords[:,1])
+        Jx = c*(np.matmul(X,H)-np.matmul(H,X)) 
+        Jy = c*(np.matmul(Y,H)-np.matmul(H,Y)) 
+        return Jx, Jy
+    
     def get_Lz_mat(self):
+        """
+        the matrix of Lz in units of hbar
+        """
         m = 9.10956 * 10**(-31) #kg
-        hbar_eVs = 0.6582119514 *10**(-15) # eV.s
+        hbar_eVs = 6.582119514 *10**(-16) # eV.s
         hbar_Js = 1.05457266 *10**(-34) #J·s
         h_Js = 6.62607015*10**(-34)
         c = m/(1j*hbar_eVs)/ hbar_Js * 10**(-20)
         ndim = len(self.coords)
-        Lz = np.zeros((ndim,ndim), dtype=float)
-        def put_value(pair, t):
-            x0, y0, _ = self.coords[pair[0]] 
-            x1, y1, _ = self.coords[pair[1]] 
-            Lz[pair[0],pair[1]] =  t* (x1*y0-x0*y1)
-            Lz[pair[1],pair[0]] =  t* (x0*y1-x1*y0)
-        pairs, ts = self.hopping
-        [put_value(pairs[i], ts[i]) for i in range(len(ts))]
-        return c*Lz
+        H = self.get_Hamiltonian()
+        X = np.zeros([ndim, ndim])
+        np.fill_diagonal(X, self.coords[:,0])
+        Y = np.zeros([ndim, ndim])
+        np.fill_diagonal(Y, self.coords[:,1])
+        XHY = np.matmul(X, np.matmul(H,Y))
+        YHX = np.matmul(Y, np.matmul(H,X))
+        return c*(YHX-XHY)
 
 
     def add_hopping_pz(self, split=False, max_dist=5.0, g0=3.12, a0=1.42, g1=0.48, h0=3.349, \
@@ -117,7 +130,6 @@ class _MethodsHamilt:
             bins = divide_sites_2D(sites, bin_box=[[max_dist,0],[0,max_dist]], idx_from=0)
             keys, values = calc_hoppings(sites, bins, hop_func=hop_func, max_dist=max_dist, nr_processes=nr_processes)
         self.hopping = keys, values
-        self.B = 0
 
     def add_hopping_wannier(self, max_dist=6.0, P=0, \
                             ts=[-2.8922, 0.2425, -0.2656, 0.0235, \
@@ -142,9 +154,11 @@ class _MethodsHamilt:
         keys = [[i,j[-1]] for i in range(len(hopping)) for j in hopping[i]]
         values = [hopping[i][j] for i in range(len(hopping)) for j in hopping[i]]
         self.hopping = [np.array(keys), np.array(values)]
-        self.B = 0
 
     def set_magnetic_field(self, B=0):
+        """
+        field is along the z aixs
+        """
         self.B = B
         pairs, ts = self.hopping
         ts_B = np.zeros(len(ts), dtype=np.complex)
@@ -157,6 +171,14 @@ class _MethodsHamilt:
             ts_B[ind] =  ts[ind] * np.exp(c*(y1-y0)*(x1+x0)*0.01)
         [add_Peierls_substitution(ind) for ind in range(len(ts))]
         self.hopping = pairs, ts_B
+
+    def set_electric_field(self, E=0):
+        """
+        field is along the z aixs
+        """
+        if E:
+            self.E = E
+            self.Es_onsite = self.coords[:,2]*E
 
 class _Read:
     def from_relaxed_struct_from_file(self, filename):
@@ -348,6 +370,9 @@ class RoundDisk(_MethodsHamilt, _LayeredStructMethods, _Output, _Read):
         self.vecs_to_NN['B'] = self.vecs_to_NN['A']
         self.vecs_to_NN['Btld'] = self.vecs_to_NN['Atld']
         self._make_structure()
+        self.B = 0
+        self.E = 0
+        self.Es_onsite = np.zeros(len(self.coords))
 
 
     def _get_cells(self):
@@ -548,7 +573,6 @@ class RoundDisk(_MethodsHamilt, _LayeredStructMethods, _Output, _Read):
                     keys = np.concatenate([keys, key], axis=0)
                     values = np.concatenate([values, value], axis=0)
         self.hopping = keys, values 
-        self.B = 0
     
 
     def edge_site_ids_by_distance(self, dist_to_edge=5.):
@@ -560,57 +584,3 @@ class RoundDisk(_MethodsHamilt, _LayeredStructMethods, _Output, _Read):
         return ids
 
 
-################# below for tipsi sample ###########
-def siteset(nsite):
-    siteset = tipsi.SiteSet()
-    for k in range(nsite):
-        siteset.add_site((0, 0, 0), k)
-    return siteset
-
-def lattice(coords):
-    sites = np.array(coords)*0.1
-    x_min, y_min, z_min = np.min(sites, axis=0) 
-    x_max, y_max, z_max = np.max(sites, axis=0)
-    lat_vecs = [[x_max-x_min, 0., 0.],[0., y_max-y_min, 0.]] 
-    lattice = tipsi.Lattice(lat_vecs, sites)
-    return lattice
-
-
-def hopdict(struct, elec_field=0.0, **kws):
-    hop_keys, hop_vals = struct.hopping
-    z_coords = struct.coords[:,2]
-    n_pairs = len(hop_keys)
-    nsite = len(z_coords)
-    hop_dict_list = [{} for i in range(nsite)]
-    for ind in range(n_pairs):
-        i,j = hop_keys[ind]
-        hop = hop_vals[ind]
-        hop_dict_list[i][(0,0,0) + (j,)] = hop
-        hop_dict_list[j][(0,0,0) + (i,)] = hop
-    if elec_field:
-        if z_coords not in kws:
-            raise ValueError
-        E_on = kws['z_coords']*elec_field
-        for i in range(nsite):
-            hop_dict.set_element((0,0,0), (i,i), E_on[i])
-    hop_dict = SparseHopDict(nsite)
-    hop_dict.dict = hop_dict_list
-    return hop_dict
-
-def sample(struct, rescale=30.,elec_field=0.0, nr_processes=1, read_from_file=''):
-    nsite = len(struct.coords)
-    latt = lattice(struct.coords)
-    site_set = siteset(nsite)
-    if os.path.isfile('sample.hdf5'):
-        sp = tipsi.Sample(latt, site_set, nr_processes=nr_processes, read_from_file='sample.hdf5')
-    else:
-        sp = tipsi.Sample(latt, site_set, nr_processes=nr_processes)
-        t0 = time.time()
-        hop_dict = hopdict(struct, elec_field=elec_field)
-        t1 = time.time()
-        print('hop % s' % (t1-t0))
-        del struct
-        sp.add_hop_dict(hop_dict)
-        sp.save()
-    sp.rescale_H(rescale)
-    return sp

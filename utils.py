@@ -1,13 +1,10 @@
 import numpy as np
+from pymatgen.core.structure import Structure
 import itertools
 
-def get_fig(nr=1, nc=1):
-    from matplotlib import pyplot as plt
-    return plt.subplots(nr, nc)
 
 def frac2cart(frac, latt_vec):
     return np.matmul(frac, latt_vec)
-    #return np.dot(np.transpose(np.array(latt_vec)), frac)
 
 def cart2frac(cart, latt_vec):
     mat = np.transpose(np.array(latt_vec))
@@ -37,6 +34,32 @@ def rotate_on_vec(theta, vec):
     elif len(vec.shape)==2: ## vector list
         mat = rotate_operator(theta, dim=vec.shape[1])
         return np.matmul(mat, np.array(vec).T).T
+
+def angle_between_vec_x(vec):
+    """
+    get the angle in degree between a in-plane vec and x axis 
+    """
+    if np.abs(vec[0]) <= 1.0e-12:
+        if vec[1] > 0.:
+            return 90.
+        elif vec[1] < 0.:
+            return 270.
+    if np.abs(vec[1]) <= 1.0e-12:
+        if vec[0] > 0.:
+            return 0.
+        elif vec[0] < 0.:
+            return 180.
+    theta = np.arctan(vec[1]/vec[0]) /np.pi * 180.
+    if vec[0]*vec[1]>0.:
+        if vec[0] > 0.:
+            return theta
+        elif vec[0] <0.:
+            return 180.+theta
+    elif vec[0]*vec[1] <0.:
+        if vec[0] >0.:
+            return theta + 360.
+        elif vec[0] <0.:
+            return theta + 180.
 
 def mirror_operate_2d(mirror_line, points):
     """
@@ -78,35 +101,6 @@ def rotate_angle(vec):
         elif vec[0] <0.:
             return theta + 180. 
 
-def grouper(in_list, n):
-    """Make n sublists from list.
-
-    Parameters
-    ----------
-    in_list : list
-        input list
-    n : integer
-        max number of sublists to return
-
-    Returns
-    ----------
-    sublists : iterable
-        iterable over sublists
-    n_sublists : integer
-        number of sublists
-    """
-
-    n_list = len(in_list)
-    in_list = iter(in_list)
-    len_sublists = int(np.ceil(1. * n_list / n))
-    if (len_sublists * (n - 1) == n_list):
-        # in this case the nth sublist is empty, so:
-        n_sublists = n - 1
-    else:
-        n_sublists = n
-    sublists = iter(lambda: list(itertools.islice(in_list, len_sublists)), [])
-    return sublists, n_sublists
-
 class MatrixExpand:
     """
     expand a matrix by replacing each scalar element with an matrix
@@ -117,3 +111,54 @@ class MatrixExpand:
         ndim_unit: the dimension of the  
         """
         self.mat_orig = copy.deepcopy(mat)
+
+def get_pmg_strut(latt_vec_2D, fracs):
+    latt_vec = latt_vec_2Dto3D(latt_vec_2D)
+    fracs = np.append(fracs, [[0.]]*len(fracs), axis=1)
+    return Structure(latt_vec, ['C']*len(fracs), fracs)
+
+def latt_vec_2Dto3D(latt_vec_2D):
+    latt_vec = np.append(latt_vec_2D, [[0., 0.,]], axis=0)
+    latt_vec = np.append(latt_vec, [[0.], [0.], [100.]], axis=1)
+    return latt_vec
+
+def get_bonding_lines_for_plot_in_matplotlib(pmg_st, bond_length):
+    a,b,c,d = pmg_st.get_neighbor_list(bond_length)
+    pnts_a = pmg_st.cart_coords[a][:,0:2]
+    frac_b = c + pmg_st.frac_coords[b]
+    pnts_b = frac2cart(frac_b, pmg_st.lattice.matrix)[:,0:2]
+    lines = [[pnts_a[i], pnts_b[i]] for i in range(len(a))]
+    return lines
+
+def lattice_plot_in_xy_in_groups(fig, ax, pmg_st, group_inds, colors, bond_lengths, sc=[5,5,1]):
+    """
+    plot a lattice (in real or reciprocal space) including sites and bonds 
+    with different groups in different colors.
+    inputs:
+        fig and ax are the figure and subplot of matplotlib
+        pmg_st: a pymatgen structure (the instance of pymatgen.core.structure.Structure)
+        group_inds: a list of atom indices for different groups
+        colors: a list of colors for plotting different groups
+        bond_lengths: a list of bond lengths for different groups
+        sc: the supercell size for plotting
+    """
+    import matplotlib.collections as mc
+    site_properties = [ None ] * pmg_st.num_sites
+    for i in range(len(group_inds)):
+        for ind in group_inds[i]:
+            site_properties[ind] = i
+        
+    pmg_st.add_site_property('group',site_properties)
+    pmg_st.make_supercell(sc)
+    for i in range(len(group_inds)):
+        indices = np.where(np.array(pmg_st.site_properties['group'])==i)[0]
+        coords = pmg_st.frac_coords[indices]
+        eles = np.array(pmg_st.species)[indices]
+        pmg_st_i = Structure(pmg_st.lattice, eles, coords)
+        ax.scatter(pmg_st_i.cart_coords[:,0], pmg_st_i.cart_coords[:,1], color=colors[i])
+        bonds = get_bonding_lines_for_plot_in_matplotlib(pmg_st_i, bond_lengths[i])
+        line = mc.LineCollection(bonds, colors=colors[i])
+        fig.canvas.draw()
+        renderer = fig.canvas.renderer
+        ax.add_collection(line)
+        ax.draw(renderer)

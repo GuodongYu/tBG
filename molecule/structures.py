@@ -2,8 +2,8 @@ import numpy as np
 import copy
 from functools import reduce
 from tBG.utils import frac2cart, cart2frac, rotate_on_vec, mirror_operate_2d, angle_between_vec_x
-from tBG.round_disk import RoundDisk, _MethodsHamilt, _Output
-from tBG.periodic_structures import _LayeredStructMethods
+from tBG.molecule.round_disk import RoundDisk, _MethodsHamilt, _Output
+from tBG.crystal.structures import _LayeredStructMethods
 
 #### geometry functions ####
 def get_interaction_two_lines(line1, line2):
@@ -83,6 +83,40 @@ class _SymmetryOperate:
 
     @staticmethod
     def _inds_pair(coords_0, coords_1):
+        """
+        coords_0: coords without symmetry operation
+        coords_1: coords with symmetry operation
+        return:
+            a list [m, n, p, q, ......]
+            describing atom positions changes according to
+              0 ---> m
+              1 ---> n
+              2 ---> p
+              3 ---> q
+              ..............
+        """
+        coords_0 = np.round(coords_0, 3)
+        coords_1 = np.round(coords_1, 3)
+
+        coords_0[coords_0==0.] = 0.
+        coords_1[coords_1==0.] = 0.
+
+        def coords_to_strlist(coords):
+            string = ['~'.join([str(x) for x in i]) for i in coords]
+            return string
+        coords_str0 = coords_to_strlist(coords_0)
+        coords_str1 = coords_to_strlist(coords_1)
+        if set(coords_str0)!=set(coords_str1):
+            raise ValueError('Not a symmetry operation!!!')
+
+        sorter = np.argsort(coords_str0)
+        inds_end = sorter[np.searchsorted(coords_str0, coords_str1, sorter=sorter)]
+
+        #return coords_str0, coords_str1, inds_end
+        return inds_end
+
+    @staticmethod
+    def _inds_pair_old(coords_0, coords_1):
         """
         coords_0: coords without symmetry operation
         coords_1: coords with symmetry operation
@@ -316,9 +350,11 @@ class _GemetryOperate:
         self.layer_types = rd.layer_types
     
     def _remove_single_bonds(self):
+        cc1 = self.a/np.sqrt(3)
+        cc1_cc2_mid = (cc1+self.a)/2
         while True:
             pmg_st = self.pymatgen_struct()
-            bonds = pmg_st.get_neighbor_list(2.0)[0]
+            bonds = pmg_st.get_neighbor_list(cc1_cc2_mid)[0]
             counts = np.array([np.count_nonzero(bonds==i) for i in range(len(self.coords))])
             inds_rm = np.where(counts<=1)[0]
             inds = np.in1d(range(pmg_st.num_sites), inds_rm)
@@ -362,15 +398,22 @@ class _Disorder:
         indices = np.setdiff1d(range(natom), indices_vac)
         self.coords = self.coords[indices]
 
-class QuantumDot(_MethodsHamilt, _GemetryOperate, _SymmetryOperate, \
+class _INIT:
+    def __init__(self, a=2.46, h=3.35):
+        self.a = a
+        self.h = h
+        self.B = 0
+        self.E = 0
+        self.Es_onsite = 0
+
+class QuantumDot(_INIT, _MethodsHamilt, _GemetryOperate, _SymmetryOperate, \
                  _Disorder,_LayeredStructMethods, _Output):
     """
     the class for a quantum dot of common twisted bilayer graphene
     x axis is always along one C2 axis (perpendicular to the primitive axis)
     """
     def __init__(self, a=2.46, h=3.35):
-        self.a = a
-        self.h = h
+        _INIT.__init__(self, a, h)
     
     def _angle_C2_axis0_x(self):
         """
@@ -489,7 +532,7 @@ class QuantumDot(_MethodsHamilt, _GemetryOperate, _SymmetryOperate, \
                 return 'D6'
 
 
-class QuantumDotQC(_MethodsHamilt, _GemetryOperate, _SymmetryOperate, \
+class QuantumDotQC(_INIT,_MethodsHamilt, _GemetryOperate, _SymmetryOperate, \
                    _Disorder,_LayeredStructMethods, _Output):
     """
     A quantum dot of 30 degree twisted bilayer graphene with rotation center at the hole of two layers
@@ -497,15 +540,22 @@ class QuantumDotQC(_MethodsHamilt, _GemetryOperate, _SymmetryOperate, \
     y axis: zigzag direction of bottom layer and armchair direction of the top layer
     """
     def __init__(self, a=2.46, h=3.35):
-        self.a = a
-        self.h = h
-        #QuantumDot.__init__(self, a=a, h=h)
+        _INIT.__init__(self, a, h)
     
-    def regular_polygon(self, n, R, overlap='hole', rm_single_bond=True):
+    def regular_polygon(self, n, R, OV_orientation=0, overlap='hole', rm_single_bond=True):
+        """
+        n: the fold number
+        R: the distance from origin to any vertex in units of a
+        OV_orient: the angle of origin-vertex relative x axis in units of degree
+        overlap: the rotation axis
+        rm_single_bond: whether the dangling bonds are removed
+        """
         self.nfold = n
         self._initial_round_disk(R+2, 30., overlap=overlap)
         ######################## informations of regular polygon ###############################
         vertices = get_vertices_regular_polygon(n, self.a*(R+1.e-4))
+        if OV_orientation:
+            vertices = rotate_on_vec(OV_orientation, vertices)
         sides = get_sides_from_vertices(vertices)
         # get atoms inside polygon 
         self.coords = filter_sites_inside_polygon(self.coords, sides)
@@ -519,16 +569,30 @@ class QuantumDotQC(_MethodsHamilt, _GemetryOperate, _SymmetryOperate, \
         if n == 12:
             self.nfold = 6
             self.point_group = 'D6d'
+
        
     def round_disk(self, R, rm_single_bond=True):
         self._initial_round_disk(R, 30., overlap='hole', rm_single_bond=rm_single_bond)
         self.point_group = 'D6d'
         self.nfold = 6
+        self.layer_nsites = self.get_layer_nsites()
+        self.layer_nsites_sublatt = self.get_layer_nsites_sublatt()
 
-class QuantumDotAB(_MethodsHamilt, _GemetryOperate, _SymmetryOperate,_Disorder,\
+    def set_electric_field(self, E=0):
+        """
+        field is along the z aixs
+        """
+        if E:
+            self.E = E
+            self.Es_onsite = self.coords[:,2]*E
+            if self.point_group == 'D6d':
+                self.point_group = 'C6v'
+
+
+class QuantumDotAB(_INIT,_MethodsHamilt, _GemetryOperate, _SymmetryOperate,_Disorder,\
                    _LayeredStructMethods, _Output):
     def __init__(self, a=2.46, h=3.35):
-        QuantumDot.__init__(self, a=a, h=h)
+        _INIT.__init__(self, a, h) 
 
     def regular_polygon(self, n, R, overlap='atom-atom', rm_single_bond=True):
         self.nfold = n

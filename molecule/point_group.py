@@ -34,10 +34,19 @@ class SharedMethods:
                 l = 2
             proj_ops[irrep] = l/self.g * np.sum([self.irreps[irrep][i]*ops_class[i] for i in range(n_class)], axis=0)
         return proj_ops
+
+    def transition_rule_SymmeOp(self, SymmeOp='sigma_x'):
+        if SymmeOp == 'sigma_x':
+            pass
+        elif SymmeOp == 'sigma_y':
+            pass
+        elif SymmeOp == 'Cn_1':
+            pass
     
 
 class C3v(SharedMethods):
     def __init__(self):
+        self.nfold = 3
         self.group_elems = ['E', 'C3_1', 'C3_2', 'sigma_v_1', 'sigma_v_2', 'sigma_v_3']
         self.g = len(self.group_elems)
         self.classes = [['E'], ['C3_1','C3_2'], ['sigma_v_1', 'sigma_v_2', 'sigma_v_3']]
@@ -52,9 +61,21 @@ class C3v(SharedMethods):
         E = {'A1':['E'], 'A2':['E'], 'E':['A1','A2','E']}
         return {'A1':A1, 'A2':A2, 'E':E}
 
+    def transition_rule_elec_dipole(self, vector='x'):
+        irrep_filter = {i:self.product_table[i]['E'] for i in self.irreps}
+        if vector == 'x':
+            SymmeOp_filter = {0:0, 180:180}
+        elif vector == 'y':
+            SymmeOp_filter = {0:180, 180:0}
+        elif vector == 'x+iy':
+            SymmeOp_filter = {0:120, 120:-120, -120:0}
+        elif vector == 'x-iy':
+            SymmeOp_filter = {0:-120, -120:120, 120:0}
+        return irrep_filter, SymmeOp_filter
 
 class C6v(SharedMethods):
     def __init__(self):
+        self.nfold = 6
         self.group_elems = ['E', 'C6_1', 'C6_5', 'C6_2', 'C6_4', 'C6_3', \
                             'sigma_v_1', 'sigma_v_2', 'sigma_v_3',\
                             'sigma_d_1', 'sigma_d_2', 'sigma_d_3']
@@ -79,9 +100,25 @@ class C6v(SharedMethods):
         E2 = {'A1':['E2'], 'A2':['E2'], 'B1':['E1'], 'B2':['E1'], 'E1':['B1','B2', 'E1'], 'E2':['A1', 'A2', 'E2']}
         return {'A1':A1, 'A2':A2, 'B1':B1, 'B2':B2, 'E1':E1, 'E2':E2}
 
+    def transition_rule_elec_dipole(self, vector='x'):
+        irrep_filter = {i:self.product_table[i]['E1'] for i in self.irreps}
+        if vector == 'x':
+            SymmeOp_filter = {1:1, -1:-1}
+            SymmeOp = 'sigma_x'
+        elif vector == 'y':
+            SymmeOp_filter = {1:-1, -1:1}
+            SymmeOp = 'sigma_x'
+        elif vector == 'x+iy':
+            SymmeOp_filter = {0:60, 60:120, 120:180, 180:-120, -120:-60, -60:0}
+            SymmeOp = 'C6_1'
+        elif vector == 'x-iy':
+            SymmeOp_filter = {0:-60, -60:-120, -120:180, 180:120, 120:60, 60:0}
+            SymmeOp = 'C6_1'
+        return irrep_filter, SymmeOp_filter, SymmeOp
 
 class D6d(SharedMethods):
     def __init__(self):
+        self.nfold = 6
         self.group_elems = ['E', 'S12_1', 'S12_11', 'C6_1', 'C6_5', 'S12_3', 'S12_9',\
                             'C6_2', 'C6_4', 'S12_5', 'S12_7', 'C6_3', \
                             'C2_1_1', 'C2_1_2', 'C2_1_3', 'C2_1_4', 'C2_1_5', 'C2_1_6', \
@@ -118,6 +155,9 @@ class D6d(SharedMethods):
         E5 = {'A1':['E5'], 'A2':['E5'], 'B1':['E1'], 'B2':['E1'], 'E1':['B1','B2', 'E4'], 'E2':['E3','E5'],\
               'E3':['E2','E4'], 'E4':['E1','E3'],'E5':['A1','A2','E2']}
         return {'A1':A1, 'A2':A2, 'B1':B1, 'B2':B2, 'E1':E1, 'E2':E2, 'E3':E3, 'E4':E4, 'E5':E5}
+
+    def transition_rule_irrep(self):
+        return {i:self.product_table[i]['E1'] for i in self.irreps}
 
 def PointGroup(label):
     if label == 'C3v':

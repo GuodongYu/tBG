@@ -135,8 +135,6 @@ def write_lammps_datafile(box, atom_ids, coords, n_atom, n_atom_type, Masses, at
                     f.write('    %s %s %s %s %.8f %.8f %.8f\n' % (atom_ids[i], kws['molecule_tag'][i], atom_type[i], kws['qs'][i],\
                                 coords[i][0], coords[i][1], coords[i][2]))
 
-
-
 class StructCustom:
     def __init__(self):
         self.dtype = {'q': float, 'x': float, 'y':float, 'z':float, 'id':int, 'type':int, 'mol':int, 'mass':float,\
@@ -218,7 +216,6 @@ class StructCustom:
             f.write(' %s\n' % self.natom)
             f.write('Cartesian\n')
             f.write(coord_str)
-
 
 
 class Log:

@@ -1,6 +1,6 @@
 import numpy as np
 import copy
-from tBG.brillouin_zones import BZHexagonal, BZMoirePattern, kpoints_line_mode_onek
+from tBG.crystal.brillouin_zones import BZHexagonal, BZMoirePattern, kpoints_line_mode_onek
 
 
 ############### diag run #####################
@@ -224,7 +224,7 @@ def plot_dos(ax=None, eig_f='EIGEN_val_mesh.npz', sigma=0.01, nedos=10000, xlim=
         plt.close()
 
 def plot_band(eig_f='EIGEN_val_path.npz', fname='band.pdf', Ef=None, title='', title_size=40,ylim=None, show=False):
-    eig = np.load(eig_f)
+    eig = np.load(eig_f, allow_pickle=True)
     kpts =eig['kpoints']
     dk = np.linalg.norm(kpts[1]-kpts[0])
 
@@ -250,8 +250,8 @@ def plot_band(eig_f='EIGEN_val_path.npz', fname='band.pdf', Ef=None, title='', t
 
     from matplotlib import pyplot as plt
     from mpl_toolkits import axisartist
-    import tBG
-    plt.rcParams.update(tBG.params)
+    #import tBG
+    #plt.rcParams.update(tBG.params)
     fig = plt.figure(1)
     ax = axisartist.Subplot(fig, 111)
     fig.add_subplot(ax)

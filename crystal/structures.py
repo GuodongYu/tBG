@@ -49,11 +49,12 @@ class _LayeredStructMethods:
             coords[:,1] = coords[:,1] - y_min + 10
             coords[:,2] = coords[:,2] - z_min + 10
             latt_vec = np.array([[x_max-x_min+20, 0, 0],[0, y_max-y_min+20, 0],[0, 0, z_max-z_min+20]])
-            eles = ['C', 'Si', 'Ge', 'Se']
-            species = [[eles[i]]*self.layer_nsites[i] for i in range(len(self.layer_nsites))]
-            species = np.concatenate(species)
+            species = ['C']*len(self.coords)
             return  pmg_struct(latt_vec, species, coords, coords_are_cartesian=True)
-
+    def pymatgen_molecule(self):
+        from pymatgen.core.structure import Molecule
+        species = ['C']*len(self.coords)
+        return Molecule(species, self.coords)
 
     def get_layer_vecs_to_NNs(self):
         """
@@ -141,7 +142,9 @@ class _LayeredStructMethods:
                 self.layer_nsites.append(nsite)
                 self.layer_nsites_sublatt.append(nsites_sublatt(layer))
                 self.layer_latt_vecs = np.append(self.layer_latt_vecs, [latt_vec(layer)], axis=0)
+                self.layer_zcoords.append(z)
         self.nsite = len(self.coords)
+
     def remove_top_layer(self):
         """
         after removing the top layer, it changes to be graphene
@@ -151,6 +154,16 @@ class _LayeredStructMethods:
         self.layer_nsites = [self.layer_nsites[0]]
         self.layer_zcoords = [self.layer_zcoords[0]]
         self.layer_types = [self.layer_types[0]]
+
+    def remove_bottom_layer(self):
+        """
+        after removing the top layer, it changes to be graphene
+        """
+        ids = self._layer_inds()[1]
+        self.coords = self.coords[ids[0]:ids[1]+1]
+        self.layer_nsites = [self.layer_nsites[1]]
+        self.layer_zcoords = [self.layer_zcoords[1]]
+        self.layer_types = [self.layer_types[1]]
 
     def adjust_interlayer_dists(self, interlayer_dists={'AA':3.61, 'AB':3.38, 'AAtld':3.46}):
         """
@@ -358,45 +371,6 @@ class Graphene(_MoirePatternMethods):
         self.layer_nsites = [2]
         self.layer_nsites_sublatt = [[1,1]]
         self.layer_latt_vecs=np.array([self.latt_vec])
+        self.layer_zcoords = [0.0]
         self.nsite = 2
         
-################################################################################################################
-############# tipsi sample ########################
-import tipsi
-from tBG.hopping import SparseHopDict
-import os
-
-def siteset(nsite, size):
-    siteset = tipsi.SiteSet()
-    for k in range(nsite):
-        for i in range(size[0]):
-            for j in range(size[1]):
-                siteset.add_site((i, j, 0), k)
-    return siteset
-
-def lattice(struct):
-    sites = struct.coords*0.1 # from ang to nm
-    lat_vecs = struct.latt_vec*0.1 # from ang to nm
-    latt = tipsi.Lattice(lat_vecs, sites)
-    return latt
-
-def sample(struct, size, rescale=20, nr_processes=1, elec_field=0.0):
-    def pbc_func(unit_cell_coords, orbital_ind):
-        x, y, z = unit_cell_coords
-        return (x%size[0], y%size[1], z), orbital_ind
-    nsite = struct.nsite
-    site_set = siteset(nsite, size)
-    latt = lattice(struct)
-    if os.path.isfile('sample.hdf5'):
-        print('Reading sample ...')
-        sp = tipsi.Sample(latt, site_set, pbc_func, nr_processes=nr_processes, read_from_file='sample.hdf5')
-        print('Read done')
-    else:
-        print('Constructing sample from scratch ...')
-        sp = tipsi.Sample(latt, site_set, pbc_func, nr_processes=nr_processes)
-        hop_dict = SparseHopDict(nsite)
-        hop_dict.dict = struct.hoppings_2to3()
-        sp.add_hop_dict(hop_dict)
-        sp.save()
-    sp.rescale_H(rescale)
-    return sp

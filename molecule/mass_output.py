@@ -1,4 +1,4 @@
-from tBG.quantum_dot import QuantumDot, QuantumDotQC, QuantumDotAB
+from tBG.quantum_dot.structures import QuantumDot, QuantumDotQC, QuantumDotAB
 from monty.json import jsanitize
 import numpy as np
 import scipy.io

@@ -1,13 +1,29 @@
-from tBG.scripts.quantum_dot.symmetry_analyzer import _parse
 import numpy as np
+import pickle
+
+def _parse(struct_f, eigen_f):
+    with open(struct_f, 'rb') as f:
+        qd = pickle.load(f)
+    eigen = np.load(eigen_f, allow_pickle=True)
+    vals = eigen['vals']
+    vecs = eigen['vecs']
+    return qd, vals, vecs
+
 
 t = 2.8
-def occup_0K(vals):
+
+def occup_0K(vals, spin=1):
     """
-    for graphene system, one orbital offer one electron
+    for graphene system, one pz orbital contribute one electron
     """
-    ne = len(vals)
-    ind_ef = int(ne/2) if ne%2 else int(ne/2)-1
+    n_dim = len(vals)
+    if spin == 1:
+        ne = n_dim
+        f_below = 2.0
+    elif spin==2:
+        ne = int(n_dim/2)
+        f_below = 1.0
+    ind_ef = int(n_dim/2) if n_dim%2 else int(n_dim/2)-1
     inds = [ind_ef]
     ef = vals[ind_ef]
     ind = ind_ef
@@ -32,14 +48,18 @@ def occup_0K(vals):
 
     ind_ef_min = min(inds)
     ind_ef_max = max(inds)
-    occup2 = [2.]*ind_ef_min
+    occup2 = [f_below]*ind_ef_min
     occup_ef = [(ne - np.sum(occup2))/len(inds)]*len(inds)
-    occup0 = [0.]*(ne-ind_ef_max-1)
+    occup0 = [0.]*(n_dim-ind_ef_max-1)
     return np.array(occup2+occup_ef+occup0)
 
-def get_vbm_cbm(vals):
-    occup = occup_0K(vals)
-    inds_ef = np.intersect1d(np.where(occup>0)[0], np.where(occup<2))
+def get_vbm_cbm(vals, spin=1):
+    occup = occup_0K(vals, spin)
+    if spin==1:
+        f_below=2
+    elif spin==2:
+        f_below=1
+    inds_ef = np.intersect1d(np.where(occup>0)[0], np.where(occup<f_below))
     if len(inds_ef):
         print('Catch a metal!')
         return vals[np.min(inds_ef)], vals[np.max(inds_ef)]
@@ -48,6 +68,29 @@ def get_vbm_cbm(vals):
         ind_cbm = np.min(np.where(occup==0.)[0])
         return vals[ind_vbm], vals[ind_cbm]
 
+def get_inds_band_edge(vals):
+    occup = occup_0K(vals)
+    inds_ef = np.intersect1d(np.where(occup>0)[0], np.where(occup<2))
+
+    def get_inds_vbms_cbms(ind_init, step):
+        inds = [ind_init]
+        val = vals[ind_init]
+        i = 1
+        while True:
+            ind_i = ind_init+step*i
+            vali = vals[ind_i]
+            if abs(vali-val)<1.e-8:
+                inds.append(ind_i)
+                i = i + 1
+            else:
+                break
+        return inds
+    ind_vbm = np.max(np.where(occup==2.)[0])
+    ind_cbm = np.min(np.where(occup==0.)[0])
+    inds_vbm = get_inds_vbms_cbms(ind_vbm, -1)
+    inds_cbm = get_inds_vbms_cbms(ind_cbm, 1)
+    return inds_vbm, inds_cbm, inds_ef
+    
 def pick_up_transition_pairs(vals, omega, e_win, occup):
     omega_minus = max(omega-e_win, 1.e-6)
     omega_plus = omega + e_win
@@ -105,7 +148,8 @@ def Re_optical_conductivity(J_mat, vals, vecs, omegas, gamma=0.05*t, e_win=5*0.0
         fm = occup[indm]
         de = vals[indn] - vals[indm]
         denominator = (omega-de)**2 + gamma**2
-        return np.linalg.norm(Jmn)**2*(fm-fn)/denominator
+        denominator_ = (omega+de)**2 + gamma**2
+        return np.linalg.norm(Jmn)**2*( (fm-fn)/denominator + (fn-fm)/denominator_)
 
     def calc_sigma_one_point(omega):
         a = 2.46
@@ -120,14 +164,19 @@ def Re_optical_conductivity(J_mat, vals, vecs, omegas, gamma=0.05*t, e_win=5*0.0
     sigmas = [calc_sigma_one_point(omega) for omega in omegas]
     return np.array(sigmas)/sigma0
 
-def calc_optical_conductivity(struct_f, eigen_f, gamma=0.02*t, e_win=10*0.05*t):
-    omegas = np.arange(4*gamma, 3*t, 0.01*t)
+def calc_optical_conductivity(struct_f, eigen_f, omegas=np.arange(0.001, 5*t, 0.01*t), gamma=0.05, e_win=30*0.05*t, save_to='sigma.txt'):
     qd, vals, vecs = _parse(struct_f, eigen_f) 
-    Jx, Jy, _ = qd.get_current_mat()
+    Jx, Jy = qd.get_current_mat()
     sigma_x = Re_optical_conductivity(Jx, vals, vecs, omegas, gamma=gamma, e_win=e_win) 
     sigma_y = Re_optical_conductivity(Jy, vals, vecs, omegas, gamma=gamma, e_win=e_win)
     sigma = np.column_stack([omegas, sigma_x, sigma_y])
-    np.savetxt('sigma.txt', sigma)
+    np.savetxt(save_to, sigma)
     return omegas, sigma_x, sigma_y 
 
-
+def plot_optical_cond(t=2.8, sigma_f='sigma.txt', save_to='optical_cond.pdf'):
+    from matplotlib import pyplot as plt
+    fig, ax = plt.subplots()
+    sigma = np.loadtxt(sigma_f)
+    ax.plot(sigma[:,0]/t, sigma[:,1], label='$\sigma_{xx}$')
+    plt.legend()
+    plt.savefig(save_to)

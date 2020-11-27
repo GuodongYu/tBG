@@ -1,8 +1,6 @@
-import numpy as np
-import time
 import tipsi
-import copy
 import os
+
 
 class SparseHopDict:
     """Sparse HopDict class
@@ -54,11 +52,11 @@ class SparseHopDict:
         
     def sparse(self, nr_processes=1):
 
-        #self.add_conjugates()
+        self.add_conjugates()
         return self.dict
 
-################# tipsi sample ###########
-    
+
+
 def siteset(nsite, size):
     siteset = tipsi.SiteSet()
     for k in range(nsite):
@@ -68,41 +66,28 @@ def siteset(nsite, size):
     return siteset
 
 def lattice(struct):
-    sites = np.array(struct.coords)*0.1 # from ang to nm
-    lat_vecs = np.append(struct.latt_compatible,[[0.],[0.]], axis=1)*0.1 # from ang to nm
+    sites = struct.coords*0.1 # from ang to nm
+    lat_vecs = struct.latt_vec*0.1 # from ang to nm
     latt = tipsi.Lattice(lat_vecs, sites)
     return latt
-
-def hopdict(struct, elec_field=0.0):
-    nsite = len(struct.coords)
-    hop_dict = SparseHopDict(nsite)
-    hopping = struct.hopping
-    for ral_uc in hopping:
-        p,q = [int(w) for w in ral_uc.split('_')]
-        for pair in hopping[ral_uc]:
-            i,j = [int(w) for w in pair.split('_')]
-            hop_dict.set_element((p,q,0), (i,j), hopping[ral_uc][pair])
-            hop_dict.set_element((-p,-q,0), (j,i), hopping[ral_uc][pair])
-    if elec_field:
-        E_on = struct.coords[:,2]*elec_field
-        for i in range(nsite):
-            hop_dict.set_element((0,0,0), (i,i), E_on[i])
-    return hop_dict
 
 def sample(struct, size, rescale=20, nr_processes=1, elec_field=0.0):
     def pbc_func(unit_cell_coords, orbital_ind):
         x, y, z = unit_cell_coords
         return (x%size[0], y%size[1], z), orbital_ind
-    nsite = len(struct.coords)
+    nsite = struct.nsite
     site_set = siteset(nsite, size)
     latt = lattice(struct)
-    if os.path.isfile('system.hdf5'):
-        sp = tipsi.Sample(latt, site_set, pbc_func, nr_processes=nr_processes, read_from_file='system.hdf5')
+    if os.path.isfile('sample.hdf5'):
+        print('Reading sample ...')
+        sp = tipsi.Sample(latt, site_set, pbc_func, nr_processes=nr_processes, read_from_file='sample.hdf5')
+        print('Read done')
     else:
+        print('Constructing sample from scratch ...')
         sp = tipsi.Sample(latt, site_set, pbc_func, nr_processes=nr_processes)
-        hop_dict = hopdict(struct, elec_field)
+        hop_dict = SparseHopDict(nsite)
+        hop_dict.dict = struct.hoppings_2to3()
         sp.add_hop_dict(hop_dict)
         sp.save()
     sp.rescale_H(rescale)
     return sp
-

@@ -1,7 +1,6 @@
 import numpy as np
-from symmetry_analyzer import check_classified_vecs_irrep, check_classified_vecs_SymmeOp, \
-        classify_eigenstates_with_SymmeOp_values, calcu_Lz_averg, plot_levels_with_SymmpOp_evalues
-from optical_conductivity import occup_0K, get_vbm_cbm
+from tBG.non_periodic_structures.symmetry_analyzer import calcu_Lz_averg
+from tBG.non_periodic_structures.optical_conductivity import occup_0K, get_vbm_cbm
 
 eig = np.load('EIGEN.npz', allow_pickle=True)
 vbm, cbm = get_vbm_cbm(eig['vals'])

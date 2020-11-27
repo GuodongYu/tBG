@@ -72,58 +72,6 @@ def divide_sites_2D(sites, bin_box=[[5,0],[0,5]], idx_from=0):
         k = k + 1
     return bins, idx_from
 
-class SparseHopDict:
-    """Sparse HopDict class
-
-    A hopping dictionary contains relative hoppings.
-    
-    Attributes
-    ----------
-    dict : list of dictionaries
-        dictionaries containing hoppings
-    """
-
-    def __init__(self, n):
-        """Initialize hop_dict object
-        """
-        self.dict = [{} for i in range(n)]
-
-    def set_element(self, rel_unit_cell, element, hop):
-        """Add single hopping to hopping matrix.
-        
-        Parameters
-        ----------
-        rel_unit_cell : 3-tuple of integers
-            relative unit cell coordinates
-        element : 2-tuple of integers
-            element indices
-        hop : complex float
-            hopping value
-        """
-        self.dict[element[0]][rel_unit_cell + (element[1],)] = hop
-    
-    def add_conjugates(self):
-        """Adds hopping conjugates to self.dict."""
-        
-        # declare new dict
-        self.new_dict = copy.deepcopy(self.dict)
-        
-        # iterate over items
-        for i in range(len(self.dict)):
-            for rel_tag, hopping in self.dict[i].items():
-                x, y, z, j = rel_tag
-                reverse_tag = (-x, -y, -z, i)
-                reverse_hopping = np.conjugate(np.transpose(hopping))
-                if reverse_tag not in self.new_dict[j]:
-                    self.new_dict[j][reverse_tag] = reverse_hopping
-                
-        # done
-        self.dict = self.new_dict
-        
-    def sparse(self, nr_processes=1):
-
-        self.add_conjugates()
-        return self.dict
 
 def hop_func_pz(g0=3.12, a0=1.42, g1=0.48, h0=3.349, rc=6.14, lc=0.265, q_dist_scale=2.218):
     """
