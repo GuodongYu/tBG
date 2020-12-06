@@ -631,8 +631,9 @@ def calc_hopping_wannier_PBC_new(pmg_struct, layer_inds, layer_inds_sublatt, lay
                 ids_j = ids_layj[j]
                 vecj_to_NN = layer_vec_to_NN[layj][j]
                 #begin is layi[i] sublatt, end is layj[j] sublatt with distance less than max_dist
-                ids = reduce(np.intersect1d, (ids_i, ids_j, ids_dist))                
-
+                ids = reduce(np.intersect1d, (ids_i, ids_j, ids_dist))     
+                if not len(ids): 
+                    continue
                 begs = center_inds[ids]
                 ends = point_inds[ids]
                 diff_vecs = offsets[ids]
