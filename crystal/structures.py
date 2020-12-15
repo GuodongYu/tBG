@@ -1,7 +1,6 @@
 import numpy as np
 from pymatgen.core.structure import Structure as pmg_struct
 from scipy.linalg.lapack import zheev
-from tBG.fortran.spec_func import get_pk
 import copy
 from tBG.utils import frac2cart
 
@@ -236,6 +235,8 @@ class _MoirePatternMethods(_LayeredStructMethods):
         elec_field: the electric field perpendicular to graphane plane
         fname: the file saveing results
         """
+        if pmk:
+            from tBG.fortran.spec_func import get_pk
         val_out = []
         vec_out = []
         pmk_out = []
