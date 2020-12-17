@@ -1,5 +1,9 @@
 import tipsi
 from tBG.tipsi_interface.crystal_sample import SparseHopDict
+import numpy as np
+import os
+import time
+import copy
 
 def siteset(nsite):
     siteset = tipsi.SiteSet()
@@ -15,7 +19,7 @@ def lattice(coords):
     lattice = tipsi.Lattice(lat_vecs, sites)
     return lattice
 
-def hopdict(struct, elec_field=0.0, **kws):
+def hopdict(struct):
     hop_keys, hop_vals = struct.hopping
     z_coords = struct.coords[:,2]
     n_pairs = len(hop_keys)
@@ -26,17 +30,14 @@ def hopdict(struct, elec_field=0.0, **kws):
         hop = hop_vals[ind]
         hop_dict_list[i][(0,0,0) + (j,)] = hop
         hop_dict_list[j][(0,0,0) + (i,)] = hop
-    if elec_field:
-        if z_coords not in kws:
-            raise ValueError
-        E_on = kws['z_coords']*elec_field
+    if struct.E:
         for i in range(nsite):
-            hop_dict.set_element((0,0,0), (i,i), E_on[i])
+            hop_dict.set_element((0,0,0), (i,i), struct.Es_onsite[i])
     hop_dict = SparseHopDict(nsite)
     hop_dict.dict = hop_dict_list
     return hop_dict
 
-def sample(struct, rescale=30.,elec_field=0.0, nr_processes=1, read_from_file=''):
+def sample(struct, rescale=30., nr_processes=1):
     nsite = len(struct.coords)
     latt = lattice(struct.coords)
     site_set = siteset(nsite)
@@ -53,3 +54,4 @@ def sample(struct, rescale=30.,elec_field=0.0, nr_processes=1, read_from_file=''
         sp.save()
     sp.rescale_H(rescale)
     return sp
+

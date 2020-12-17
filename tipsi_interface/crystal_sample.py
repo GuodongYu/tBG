@@ -1,6 +1,7 @@
 import tipsi
 import os
-
+import copy
+import numpy as np
 
 class SparseHopDict:
     """Sparse HopDict class
