@@ -569,7 +569,10 @@ def calc_hopping_wannier_PBC_new(pmg_struct, layer_inds, layer_inds_sublatt, lay
         c = np.array(c, dtype=int)
         d = np.array([round(i,precision) for i in d])
         dist_shells = np.unique(d)
-        r_cut = dist_shells[n_neigh-1]
+        if len(dist_shells)<n_neigh: 
+            r_cut = dist_shells[-1] + 1.0
+        else:
+            r_cut = dist_shells[n_neigh-1]
         dist_shells = dist_shells[:n_neigh]
         ids = np.where(d<=r_cut)[0]
         a, b, c, d = a[ids], b[ids], c[ids], d[ids]
