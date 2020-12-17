@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.linalg.lapack import zheev
-from tBG.molecule.optical_conductivity import occup_0K, occup_TK
+from tBG.molecule.eigenvals_analyzer import occup_0K, occup_TK
 import copy
 import os
 import pickle

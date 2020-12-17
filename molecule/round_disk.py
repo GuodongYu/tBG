@@ -584,3 +584,34 @@ class RoundDisk(_MethodsHamilt, _LayeredStructMethods, _Output, _Read):
         return ids
 
 
+def round_disks_multilayer(R, thetas, overlap, a=2.46, h=3.35, rm_dangling=True):
+    """
+    R: the radius of the round disk
+    thetas: the twist angles between closest layers
+    overlap: the rotation centor 'atom' or 'hole'
+    rm_dangling: True or False to remove the dangling bonds at edge
+    """
+    rd = RoundDisk()
+    rd.make_structure(R, rotation_angle=thetas[0], a=a, h=h, overlap=overlap, rm_dangling=rm_dangling)
+    for i in range(1, len(thetas)):
+        theta = thetas[i] # relative orientation between the top layer and the layer which will be added
+        ## the infomation of the top layer
+        inds_i = rd._layer_inds()[-1]
+        coords_i = rd.coords[inds_i[0]:inds_i[1]+1]
+        latt_vec_i = rd.layer_latt_vecs[-1]
+        z_i = rd.layer_zcoords[-1]
+
+        ## the infomation of the layer which will be added
+        h_new = rd.layer_zcoords[-1] + h
+        rd.layer_zcoords.append(h_new)
+        coords_new = rotate_on_vec(theta, coords_i)
+        coords_new[:,-1] = h_new
+        latt_vec_new = rotate_on_vec(theta, latt_vec_i)
+        rd.coords = np.concatenate([rd.coords, coords_new])
+        rd.layer_latt_vecs = np.concatenate([rd.layer_latt_vecs, [latt_vec_new]])
+        rd.layer_nsites.append(rd.layer_nsites[-1])
+        rd.layer_nsites_sublatt.append(rd.layer_nsites_sublatt[-1])
+    return rd
+
+    
+    

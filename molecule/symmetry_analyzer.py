@@ -1,16 +1,7 @@
 import pickle
 import numpy as np
 from tBG.molecule.point_group import PointGroup
-from tBG.molecule.optical_conductivity import get_vbm_cbm, occup_0K, get_inds_band_edge
-   
-def _parse(struct_f, eigen_f):
-    with open(struct_f, 'rb') as f:
-        qd = pickle.load(f)
-    eigen = np.load(eigen_f, allow_pickle=True)
-    vals = eigen['vals']
-    vecs = eigen['vecs']
-    return qd, vals, vecs
-
+from tBG.molecule.eigenvals_analyzer import get_vbm_cbm, occup_0K, get_inds_band_edge, _parse
 
 def get_representation_matrices(qd):
     """
@@ -87,7 +78,7 @@ def _vals_vecs_irrep_group(vals, vecs, irreps):
     vecs_irrep = {i:vecs[:,inds[i]] for i in irreps_label}
     return vals_irrep, vecs_irrep
     
-def classify_eigen_states_irrep(struct_f='struct.obj', eigen_f='EIGEN.npz'):
+def classify_eigen_states_irrep(struct_f='struct.obj', eigen_f='EIGEN.npz',ylim=None):
     """
     struct: the picked struct file
     eigen_f: the eigen file(npz) including vals and vecs for eigenvalues and eigenvectors
@@ -99,10 +90,18 @@ def classify_eigen_states_irrep(struct_f='struct.obj', eigen_f='EIGEN.npz'):
 
     qd, vals, vecs = _parse(struct_f, eigen_f)   
     pg = PointGroup(qd.point_group) 
-    ndim = len(vals)
+    nval = len(vals)
     proj_ops = get_projection_operators(qd)
     ops_class_group = get_representation_matrices(qd)
     irreps_label = proj_ops.keys()
+    if ylim is not None:
+        vbm, cbm = get_vbm_cbm(vals, spin=1)
+        ef = (vbm+cbm)/2
+        ylim = [ef+ylim[0], ef+ylim[1]]
+        inds = np.intersect1d(np.where(vals>=ylim[0])[0], np.where(vals<=ylim[1])[0])
+        vals = vals[inds]
+        vecs = vecs[:,inds]
+        nval = len(vals)
 
     def pre_treatment():
         norms = {}
@@ -114,7 +113,7 @@ def classify_eigen_states_irrep(struct_f='struct.obj', eigen_f='EIGEN.npz'):
 
     def check_irrep_comp():
         irreps = [] # save all irrep conmpont for all eigen vectors
-        for i in range(ndim):
+        for i in range(nval):
             include_irrep = []
             for irrep in proj_ops:
                 if norms[irrep][i]>1.e-6:
@@ -169,9 +168,7 @@ def classify_eigen_states_irrep(struct_f='struct.obj', eigen_f='EIGEN.npz'):
             ind_val = 0
             for irrep in decompose_comp:
                 n_time = decompose_comp[irrep]
-                print(n_time)
                 if not n_time:
-                    print('leave')
                     continue
                 if irrep[0] in ['A','B']:
                     n_basis = n_time
@@ -189,7 +186,7 @@ def classify_eigen_states_irrep(struct_f='struct.obj', eigen_f='EIGEN.npz'):
         
     
 def _classify_eigenstates_SymmeOp_and_irrep(SymmeOp_mat, SymmeOp_vals_1D_irrep, \
-                                           struct_f='struct.obj', eigen_f='EIGEN.npz'):
+                                           struct_f='struct.obj', eigen_f='EIGEN.npz', ylim=None):
     """
     classify the Hamiltonian eigenstates of the system with irrep and the eigen value of symmetry operation (SymmeOp_mat)
     Just for C3v, C6v and D6d poing groups (namely graphene quasicrystal dots)
@@ -206,7 +203,7 @@ def _classify_eigenstates_SymmeOp_and_irrep(SymmeOp_mat, SymmeOp_vals_1D_irrep, 
                 out.append([i])
             val = vali
         return out
-    vals_irrep, vecs_irrep = classify_eigen_states_irrep(struct_f='struct.obj', eigen_f='EIGEN.npz')
+    vals_irrep, vecs_irrep = classify_eigen_states_irrep(struct_f=struct_f, eigen_f=eigen_f, ylim=ylim)
 
     vals_H_symm = {}
     vecs_H_symm = {}
@@ -263,7 +260,7 @@ def get_op_mat_full_space(symmeop_label, qd):
         op_mat = get_representation_matrices(qd)[1][0]
     return op_mat
 
-def classify_eigenstates_SymmeOp_and_irrep(SymmeOp_label='sigma_x', struct_f='struct.obj', eigen_f='EIGEN.npz'):
+def classify_eigenstates_SymmeOp_and_irrep(SymmeOp_label='sigma_x', struct_f='struct.obj', eigen_f='EIGEN.npz',ylim=None):
     """
     classify the Hamiltonian eigenstates and eigenvalues according to ireducible representation 
     and eigenvalues of symmetry operation matrix. 
@@ -305,36 +302,41 @@ def classify_eigenstates_SymmeOp_and_irrep(SymmeOp_label='sigma_x', struct_f='st
         SymmeOp_mat = get_representation_matrices(qd)[1][0]
         SymmeOp_vals_1D_irrep = {'A1':1, 'A2':1, 'B1':-1, 'B2':-1}
     return _classify_eigenstates_SymmeOp_and_irrep(SymmeOp_mat, SymmeOp_vals_1D_irrep, \
-                                           struct_f='struct.obj', eigen_f='EIGEN.npz')         
-    
-def plot_levels_with_SymmpOp_evalues(t=2.8, SymmeOp_label='sigma_x', ylim=None, struct_f='struct.obj', eigen_f='EIGEN.npz'):
-    vals, vecs = classify_eigenstates_SymmeOp_and_irrep(SymmeOp_label=SymmeOp_label, struct_f=struct_f, eigen_f=eigen_f)
+                                           struct_f=struct_f, eigen_f=eigen_f,ylim=ylim)         
+   
+ 
+def plot_levels_with_SymmpOp_evalues(ax, SymmeOp_label='sigma_x', ylim=None, \
+                  struct_f='struct.obj', eigen_f='EIGEN.npz', color='blue'):
+    vals, vecs = classify_eigenstates_SymmeOp_and_irrep(SymmeOp_label=SymmeOp_label, struct_f=struct_f, eigen_f=eigen_f,ylim=ylim)
     eig = np.load(eigen_f)
     vals_expand = eig['vals']
-    from tBG.molecule.optical_conductivity import get_vbm_cbm
     vbm, cbm = get_vbm_cbm(vals_expand)
+    ef = (vbm+cbm)/2.
     symmpOP_values = sorted(vals.keys())
     xs = [-0.15, -0.05]
     dx = xs[1]-xs[0]
     shift = 0.05
-    from matplotlib import pyplot as plt
-    fig, ax = plt.subplots()
+    xticks = []
     for rou in symmpOP_values:
         x0 = xs[1]+shift
         x1 = x0 + dx
         xs = [x0, x1]
-        ax.text(np.sum(xs)/2,0, '$\\theta=%s^{\degree}$' % rou, color='red')
+        xticks.append(np.sum(xs)/2)
         i = 0
         for irrep in vals[rou]:
             for e in vals[rou][irrep]:
-                e = e/t
-                ax.plot(xs, [e, e], color='black')
-                ax.text(x0+i*0.02, e, irrep, color='blue')
+                irrep_ = r'\boldmath$%s_%s$' % (irrep[0], irrep[1])
+                ax.plot(xs, [e, e], color=color)
+                ax.text(x0+i*0.03, e, irrep_, color=color)
             i = i +1
     if ylim is not None:
-        ax.set_ylim(ylim)
+        ax.set_ylim([ylim[0]+ef, ylim[1]+ef])
+    ax.set_xticks(xticks)
+    xticklabels = [str(i)+'$^{\circ}$' for i in symmpOP_values]
+    ax.set_xticklabels(xticklabels)
     ax.axhline((vbm+cbm)/2, ls='dashed', color='blue')
-    plt.show()
+    ax.set_xlabel(r'$\theta$')
+    ax.set_ylabel(r'Energy (eV)')
 
 def calcu_Lz_averg(SymmeOp_label='Cn1', struct_f='struct.obj', eigen_f='EIGEN.npz'):
     with open(struct_f, 'rb') as f:
@@ -479,7 +481,10 @@ def plot_eigenvectors(symmeop_label, elim=None, struct_f='struct.obj',eigen_f='E
     qd.add_hopping_wannier(ts=[-2.8])
     vbm, cbm = get_vbm_cbm(vals_expand)
     ef = (vbm+cbm)/2.
-    elim = np.array(elim)+ef
+    if elim is not None:
+        elim = np.array(elim)+ef
+    else:
+        elim = [min(vals_expand), max(vals_expand)]
     vals, vecs = classify_eigenstates_SymmeOp_and_irrep(symmeop_label, struct_f, eigen_f)
     def add_one_picture(ax, vec, val):
         qd.plot(fig, ax, site_size=0, lw=lw)      
@@ -490,10 +495,13 @@ def plot_eigenvectors(symmeop_label, elim=None, struct_f='struct.obj',eigen_f='E
         coords_i = qd.coords[ind0:ind1]
         ax.scatter(coords_i[:,0], coords_i[:,1], occp[ind0:ind1],color='black', alpha=alpha, linewidths=0, edgecolors=None)
         ### top layer ##
-        ind0 = qd.layer_nsites[0]
-        ind1 = qd.layer_nsites[0] + qd.layer_nsites[1]
-        coords_i = qd.coords[ind0:ind1]
-        ax.scatter(coords_i[:,0], coords_i[:,1], occp[ind0:ind1], color='red', alpha=alpha, linewidths=0, edgecolors=None)
+        try:
+            ind0 = qd.layer_nsites[0]
+            ind1 = qd.layer_nsites[0] + qd.layer_nsites[1]
+            coords_i = qd.coords[ind0:ind1]
+            ax.scatter(coords_i[:,0], coords_i[:,1], occp[ind0:ind1], color='red', alpha=alpha, linewidths=0, edgecolors=None)
+        except:
+            pass
         ax.set_title('$E-E_f$: %.2f' % (val-ef))
         ax.axis('equal')
     for angle in vecs:
