@@ -197,8 +197,6 @@ def plot_dos(ax=None, eig_f='EIGEN_val_mesh.npz', sigma=0.01, nedos=10000, xlim=
     if ax is None:
         from matplotlib import pyplot as plt
         fig, ax = plt.subplots(1,1)
-        import tBG
-        plt.rcParams.update(tBG.params)
         plot = True
     with open('DOS') as f:
         Ef = float(f.readline().split(' ')[-1])
@@ -242,6 +240,7 @@ def plot_band(eig_f='EIGEN_val_path.npz', fname='band.pdf', Ef=None, title='', t
     norb = len(eig['vals'][0])
     if Ef is None:
         Ef = max(eig['vals'][:,int(norb/2)-1])
+        print(max(eig['vals'][:,int(norb/2)-1]), min(eig['vals'][:,int(norb/2)]))
     enes = eig['vals']-Ef
     
 

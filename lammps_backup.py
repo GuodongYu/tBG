@@ -6,8 +6,9 @@ import subprocess
 from shutil import copyfile
 import glob
 import copy
+from tBG.molecule.round_disk_new import get_hydrogen_coords_for_saturation
 
-def lattvec_comm2lmp(latt_vec):
+def latt_comm2lmp(latt_vec):
     a,b,c = latt_vec
     xhi = a[0]
     xlo = 0.
@@ -20,7 +21,7 @@ def lattvec_comm2lmp(latt_vec):
     tilts = [xy, xz, yz]
     return box, tilts
 
-def lattvec_lmp2comm(box, tilts):
+def latt_lmp2comm(box, tilts):
     xlo, xhi = box[0]
     ylo, yhi = box[1]
     zlo, zhi = box[2]
@@ -28,6 +29,64 @@ def lattvec_lmp2comm(box, tilts):
     return np.array([[xhi-xlo, 0, 0],
                      [xy, yhi-ylo, 0],
                      [xz, yz, zhi-zlo]])
+
+def struct_out2in(fname, atom_style='full'):
+    """
+    fname: the file saving the relaxation (atom or custom format)
+    obtain the relaxed structure from the lammps output file and write it into the
+    lammps input file for relax further
+    """
+    with open(fname, 'r') as f:
+        natom = int(float([i for i in islice(f, 3, 4)][0]))
+    with open(fname, 'r') as f:
+        data = [i for i in islice(f, 9+natom)]
+        data0 = copy.deepcopy(data)
+        while True: 
+            data_tmp = [i for i in islice(f, 9+natom)]
+            if len(data_tmp):
+                data = data_tmp
+            else:
+                break
+    box = data[5:8]
+    box = np.array([i.split() for i in box], dtype=float)
+    xlo_, xhi_, xy = box[0]
+    ylo_, yhi_, xz = box[1]
+    zlo_, zhi_, yz = box[2]
+    xlo = xlo_ - min(0.0,xy,xz,xy+xz)
+    xhi = xhi_ - max(0.0,xy,xz,xy+xz)
+    ylo = ylo_ - min(0.0,yz)
+    yhi = yhi_ - max(0.0,yz)
+    zlo = zlo_
+    zhi = zhi_
+        
+    box = [[xlo, xhi],[ylo, yhi],[zlo, zhi]]
+    tilts = [xy, xz, yz]
+
+    props = data[8].split()[2:]
+    
+    sites = data[9:]
+    coords = np.array([i.split() for i in sites])
+    ids = dict(zip(props, range(len(props))))
+    
+    atom_ids = np.array(coords[:,ids['id']], dtype=int)
+    n_atom = len(atom_ids)
+    ids_sort = np.argsort(atom_ids)
+    coords = coords[ids_sort]
+
+    atom_ids = np.array(coords[:,ids['id']], dtype=int)
+    atom_type = np.array(coords[:,ids['type']], dtype=int)
+    molecule_tag = np.array(coords[:,ids['mol']], dtype=int)
+    mass = np.array(coords[:,ids['mass']], dtype=float)
+    atom_type_ = dict(zip(atom_type, range(len(atom_type))))
+    n_atom_type = len(atom_type_)
+    Masses = [mass[atom_type_[i]] for i in range(1,n_atom_type+1)]
+    qs = np.array(coords[:, ids['q']], dtype=float)
+    x = np.array(coords[:,ids['x']], dtype=float)
+    y = np.array(coords[:,ids['y']], dtype=float)
+    z = np.array(coords[:,ids['z']], dtype=float)
+    coords = np.concatenate([[x],[y],[z]], axis=0).T
+    write_lammps_datafile(box, atom_ids, coords, n_atom, n_atom_type, Masses, atom_type, \
+                           atom_style='full', tilts=tilts, molecule_tag=molecule_tag, qs=qs)    
 
 def write_lammps_datafile(box, atom_ids, coords, n_atom, n_atom_type, Masses, atom_type, \
                            atom_style='full', fname='data.struct', **kws):
@@ -76,6 +135,40 @@ def write_lammps_datafile(box, atom_ids, coords, n_atom, n_atom_type, Masses, at
                 for i in range(n_atom):
                     f.write('    %s %s %s %s %.8f %.8f %.8f\n' % (atom_ids[i], kws['molecule_tag'][i], atom_type[i], kws['qs'][i],\
                                 coords[i][0], coords[i][1], coords[i][2]))
+
+def write_lammps_datafile_QuantumDot(qd, atom_style='full', fname='data.struct', with_H=True):
+    """
+    atom_style: 'full' or 'atomic' which determine the format of the
+                 atom part in data file
+    atoms in different layers were given differen atom_type and molecule-tag
+    """
+    coords = qd.coords
+    n_layer = len(qd.layer_nsites)
+    n_atom_type = n_layer
+    mass = [12.0107]*n_atom_type
+    atom_type = np.concatenate([[i]*qd.layer_nsites[i-1] for i in range(1, n_atom_type+1)])
+    molecule_tag = atom_type
+    if with_H:
+        coords_H = get_hydrogen_coords_for_saturation(qd, bond=1.0)
+        layer_H_num = [len(i) for i in coords_H]
+        H_type = np.concatenate([[i]*layer_H_num[i-1] for i in range(1, len(layer_H_num)+1)])
+        molecule_tag = np.append(atom_type, H_type, axis=0)
+        atom_type = np.append(atom_type, H_type+max(atom_type), axis=0)
+        n_atom_type = n_atom_type*2
+        mass = mass +[1.0079]*len(mass)
+        coords_H_merged = np.concatenate(coords_H, axis=0)
+        coords = np.append(coords, coords_H_merged, axis=0)
+    n_atom = len(coords)    
+    a = [min(coords[:,0])-100, max(coords[:,0])+100]
+    b = [min(coords[:,1])-100, max(coords[:,1])+100]
+    c = [min(coords[:,2])-100, max(coords[:,2])+100]
+    box = [a, b, c]
+    tilts = [0, 0, 0]
+    atom_id = range(1, n_atom+1)
+    q = [0.0] * n_atom
+    write_lammps_datafile(box, atom_id, coords, n_atom, n_atom_type, mass, atom_type, atom_style=atom_style, \
+                          tilts=tilts, qs=q, molecule_tag=molecule_tag, fname=fname)
+
 
 class LammpsStruct:
     def __init__(self):
@@ -129,16 +222,15 @@ class LammpsStruct:
             data[i] = np.array(coords[:,ids[i]], dtype = self.dtype[i])
         self.data = data
 
-    @property
-    def latt_vec(self):
-        return lattvec_lmp2comm(self.box, self.tilts)
+    def to_tBG_molecule_struct(self):
+        from tBG.molecule.round_disk import RoundDisk
+        rd = RoundDisk()
+        ids = np.where(self.data['mass']==12.0107)[0]
+        rd.coords = np.transpose([self.data['x'][ids],self.data['y'][ids],self.data['z'][ids]])
+        rd.Es_onsite = np.zeros(len(ids))
+        return rd
 
-    @property
-    def cart_coords(self):
-        coords = np.concatenate([[self.data['x']],[self.data['y']],[self.data['z']]], axis=0).T
-        return coords
-
-    def write_datafile(self, atom_style='full'):
+    def to_input_datafile(self, atom_style='full'):
         """
         fname: the file saving the relaxation (atom or custom format)
         obtain the relaxed structure from the lammps output file and write it into the
@@ -152,7 +244,7 @@ class LammpsStruct:
         write_lammps_datafile(self.box, self.data['id'], coords, self.natom, n_atom_type, Masses, self.data['type'], \
                                atom_style='full', tilts=self.tilts, molecule_tag=self.data['mol'], qs=self.data['q'])    
 
-    def write_POSCAR(self, fname='POSCAR'):
+    def to_POSCAR(self, fname='POSCAR'):
         latt_vec = latt_lmp2comm(self.box, self.tilts)
         coords = np.concatenate([[self.data['x']],[self.data['y']],[self.data['z']]], axis=0).T
         z_coords = coords[:,-1]

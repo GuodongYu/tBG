@@ -8,29 +8,14 @@ from monty.json import jsanitize
 from scipy import interpolate
 import copy
 
+config_dyn_pol = {'q_points':[[0,0,0]], 'background_dielectric_constant':1.0, 'coulomb_constant':1.4399644*2*np.pi}
+config_generic = {'correct_spin':True, 'nr_random_samples':1, 'nr_time_steps':2048, 'beta':11604.505/300, \
+                  'mu':0, 'cuda':False, 'seed':1337}
 
 class TipsiCalc(object):
     def __init__(self, tipsi_sample):
         self.sample = tipsi_sample
         self.norb = len(self.sample.site_x)
-        
-    def config(self, B, nr, nt=2048, mu=0., Temp=300, seed=1337, quasi_enes=[], **dckb):
-        self.sample.set_magnetic_field(B)
-        config = tipsi.Config(self.sample)
-        config.generic['correct_spin'] = True
-        config.generic['nr_random_samples']=nr
-        config.generic['nr_time_steps'] = nt
-        config.generic['beta'] = 11604.505/Temp
-        config.generic['mu'] = mu
-        config.generic['cuda'] = False
-        config.generic['seed'] = seed
-        if dckb:
-            for i in dckb:
-                config.dckb[i] = dckb[i]
-        if len(quasi_enes):
-            config.quasi_eigenstates['energies'] = quasi_enes
-        config.save()
-        return config
 
     @staticmethod
     def _DOS_norm0(dos, norb, nelec, prec=1.e-3):
@@ -88,20 +73,67 @@ class TipsiCalc(object):
         ind = idos_relative.index(min(idos_relative))
         return {'energies':energies,'DOS':dos, 'efermi':energies[ind]}
 
-    def DOS_calc(self, B, nr, nt=2048, save_to='DOS.json'):
-        config = self.config(B, nr, nt)
+    def DOS_calc(self, ene_cut=20, config_generic=config_generic, B=0, save_to='DOS.json'):
+        """
+        ene_cut: energy range [-ene_cut, ene_cut] will be calculated for DOS
+        """
+        if B:
+            self.sample.set_magnetic_field(B)
+        config = tipsi.Config(self.sample)
+        for i in config_generic:
+            config.generic[i] = config_generic[i]
+        config.sample['energy_range'] = ene_cut
+        config.save()
         corr_DOS = tipsi.corr_DOS(self.sample, config)
         energies_DOS, DOS = tipsi.analyze_corr_DOS(config, corr_DOS)
         dos = {}
         dos['energies'] = energies_DOS
         dos['DOS'] = DOS
         dos = self._DOS_norm0(dos, self.norb, self.norb)
-        if save_to.split('.')[-1] != 'json':
-            raise ValueError('Error: only json file are accept!!')
         with open(save_to,'w') as f:
             f.write(json.dumps(jsanitize(dos)))
 
-    def LDOS_calc(self, B, nr, nt=1024, ldos_sites = [], ldos_separated=True, save_to = 'LDOS.json'):
+    def AC_calc(self, config_generic=config_generic, B=0, save_to='AC.json'):
+        """
+        energy_range: the omegas maximum 
+        """
+        if B:
+            self.sample.set_magnetic_field(B)
+        config = tipsi.Config(self.sample)
+        for i in config_generic:
+            config.generic[i] = config_generic[i]
+        config.save()
+        corr_AC = tipsi.corr_AC(self.sample, config)
+        omegas, AC= tipsi.analysis.analyze_corr_AC(config, corr_AC)
+        ac = {}
+        ac['omegas'] = omegas
+        ac['AC'] = AC
+        with open(save_to,'w') as f:
+            f.write(json.dumps(jsanitize(ac)))
+        return ac
+
+    def plasmon_calc(self, config_generic=config_generic, config_dyn_pol=config_dyn_pol, save_to='plasmon.json'):
+        config = tipsi.Config(self.sample)
+        for i in config_generic:
+            config.generic[i] = config_generic[i]
+        for i in config_dyn_pol:
+            config.dyn_pol[i] = config_dyn_pol[i]
+        config.save()
+        corr_dyn_pol = tipsi.corr_dyn_pol(self.sample, config)
+        qval, omegas, dyn_pol = tipsi.analyze_corr_dyn_pol(config, corr_dyn_pol)
+        qval, omegas, epsilon = tipsi.get_dielectric_function(config, dyn_pol)
+        out = {}
+        out['q_points'] = qval
+        out['omegas'] = omegas
+        out['dyn_pol_real'] = dyn_pol.real
+        out['dyn_pol_imag'] = dyn_pol.imag
+        out['epsilon_real'] = epsilon.real
+        out['epsilon_imag'] = epsilon.imag
+        with open(save_to,'w') as f:
+            f.write(json.dumps(jsanitize(out)))
+        return out
+
+    def LDOS_calc(self, B=0, n_sample=1, n_timestep=1024, ldos_sites = [], ldos_separated=True, save_to = 'LDOS.json'):
         """
         Args:
             T: the magnetic field
@@ -112,10 +144,11 @@ class TipsiCalc(object):
                     please note only the json file will be used here.
         """
 
-
+        if B:
+            self.sample.set_magnetic_field(B)
         if ldos_separated:
             for i in ldos_sites:
-                config = self.config(B, nr, nt, save=False)  
+                config = self.config_generic(nr, nt, save=False)  
                 LDOS_sites = []
                 LDOS_sites.append(self.sample.tag_to_index[(0,0,0,i)])
                 config.LDOS['site_indices'] = LDOS_sites
@@ -146,18 +179,6 @@ class TipsiCalc(object):
             with open(save_to,'w') as f:
                 f.write(json.dumps(jsanitize(ldos)))
 
-    def AC_calc(self, B, nr, mu=0., nt=1024, seed=1337,save_to=''):
-        config = self.config(B, nr, nt=nt, seed=seed, mu=mu)
-        corr_AC = tipsi.corr_AC(self.sample, config)
-        omegas, AC= tipsi.analysis.analyze_corr_AC(config, corr_AC)
-        ac = {}
-        ac['omegas'] = omegas
-        ac['AC'] = AC
-        if save_to:
-            with open(save_to,'w') as f:
-                f.write(json.dumps(jsanitize(ac)))
-        return ac
-
     def DC_calc(self, B, nr, nt=1024, ispin=1, save_to='DC.json'):
         config = self.config(B, nr, nt)
         corr_DOS, corr_DC = tipsi.correlation.corr_DC(self.sample, config)
@@ -172,12 +193,14 @@ class TipsiCalc(object):
     def Hall_cond_calc(self, B, Temp=0.0001, n_kernel=8000, ne_integral=8000, direction=2, 
                         energy_range=[-3.3,2.6], ef=0.905, nr=1, nt=8192, save_to='Hall_cond.json'):
         energy_range = np.array(energy_range) + ef
+        config = self.config(B, nr, nt, Temp, **dckb)
         dckb = {}
         dckb['n_kernel'] = n_kernel
         dckb['direction']  = direction
         dckb['ne_integral']  = ne_integral
         dckb['energies'] = np.arange(energy_range[0],energy_range[1],0.001)
-        config = self.config(B, nr, nt, Temp, **dckb)
+        for i in dckb:
+            config.dckb[i] = dckb[i]
         energies, mu, cond = tipsi.get_dckb(self.sample, config)
         out = {}
         out['energies'] = energies

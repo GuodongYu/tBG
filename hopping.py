@@ -253,8 +253,8 @@ def calc_hoppings(site0s, bin0s, site1s=[], bin1s={}, hop_func=hop_func_pz(), ma
         hop_type = 'intra'
         neighs = [(1,0), (0,1), (1,1), (1,-1)]
     ## hop_type of intra and inter does not mean interlayer or intralayer
-    ## inter means that there are two parts of the system, we just want to get the hopping between them
-    ## intra means that there is only one part of the system, we want to get the hopping within it
+    ## inter means that there are two parts of the system and bin1s is given we just want to get the hopping between them.
+    ## intra means that there is only one part of the system and bin1s is not given, we want to get the hopping within it. 
     ## in any case, the system are divided into small bins.
     
     def hops_within_bin(bin0):

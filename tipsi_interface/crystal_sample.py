@@ -72,23 +72,28 @@ def lattice(struct):
     latt = tipsi.Lattice(lat_vecs, sites)
     return latt
 
-def sample(struct, size, rescale=20, nr_processes=1, elec_field=0.0):
+def sample_from_scratch(struct, size, rescale=20, nr_processes=1, elec_field=0.0, save_to='sample.hdf5'):
     def pbc_func(unit_cell_coords, orbital_ind):
         x, y, z = unit_cell_coords
         return (x%size[0], y%size[1], z), orbital_ind
     nsite = struct.nsite
     site_set = siteset(nsite, size)
     latt = lattice(struct)
-    if os.path.isfile('sample.hdf5'):
-        print('Reading sample ...')
-        sp = tipsi.Sample(latt, site_set, pbc_func, nr_processes=nr_processes, read_from_file='sample.hdf5')
-        print('Read done')
-    else:
-        print('Constructing sample from scratch ...')
-        sp = tipsi.Sample(latt, site_set, pbc_func, nr_processes=nr_processes)
-        hop_dict = SparseHopDict(nsite)
-        hop_dict.dict = struct.hoppings_2to3()
-        sp.add_hop_dict(hop_dict)
-        sp.save()
+    sp = tipsi.Sample(latt, site_set, pbc_func, nr_processes=nr_processes)
+    hop_dict = SparseHopDict(nsite)
+    hop_dict.dict = struct.hoppings_2to3()
+    sp.add_hop_dict(hop_dict)
+    sp.save(filename=save_to)
+    sp.rescale_H(rescale)
+    return sp
+
+def sample_from_file(struct, size, rescale=20, nr_processes=1, elec_field=0.0, fname='sample.hdf5'):
+    def pbc_func(unit_cell_coords, orbital_ind):
+        x, y, z = unit_cell_coords
+        return (x%size[0], y%size[1], z), orbital_ind
+    nsite = struct.nsite
+    site_set = siteset(nsite, size)
+    latt = lattice(struct)
+    sp = tipsi.Sample(latt, site_set, pbc_func, nr_processes=nr_processes, read_from_file=fname)
     sp.rescale_H(rescale)
     return sp

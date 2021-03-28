@@ -1,7 +1,7 @@
 import pickle
 import numpy as np
 from tBG.molecule.point_group import PointGroup
-from tBG.molecule.optical_conductivity import get_vbm_cbm, occup_0K
+from tBG.molecule.eigenvals_analyzer import get_inds_band_edge, occup_0K
    
 def _parse(struct_f, eigen_f):
     with open(struct_f, 'rb') as f:
@@ -14,7 +14,7 @@ def _parse(struct_f, eigen_f):
 class FullSpace:
     def __init__(self, qd):
         """
-        the full space means all the pz orbitals for the tight-binding model
+        the full space supported by all pz orbitals as the basis of the tight-binding model
         """
         self.qd = qd    
         self.rep = self._decompose_as_irreps()
@@ -23,18 +23,18 @@ class FullSpace:
         """
         decompose the redicible representation to irreps
         """
-        ops = self.get_mat_of_operators()
+        ops = self.get_SymmOp_matrices()
         chi = [np.trace(i[0]) for i in ops]
         pg = PointGroup(self.qd.point_group)
         return pg.rrep2irrep(chi)
 
-    def get_mat_of_operators(self):
+    def get_symmop_matrices(self):
         """
         get the reducible representation matrices grouped by classes
         return: 
             for C3v, [[E], [C3_1,C3_2], [three sigma_v]]
             for C6v, [[E], [C6_1,C6_5], [C6_2,C6_4],[C6_3], [three sigma_v], [three sigma_d]]
-            for D6h, [[E], [S12_1, S12_11], [C6_1, C6_5], [S12_3, S12_9], [C6_2, C6_4], [S12_5, S12_7], [C6_3], [six C2_1], [six sigma_d]]
+            for D6d, [[E], [S12_1, S12_11], [C6_1, C6_5], [S12_3, S12_9], [C6_2, C6_4], [S12_5, S12_7], [C6_3], [six C2_1], [six sigma_d]]
         """
         qd = self.qd
         ops = qd.symmetry_operations()
@@ -63,37 +63,54 @@ class FullSpace:
             sigma_d = [qd.symmetryop2matrix(i) for i in ops['sigma_vs']]
             return [[E], S12_1_11, C6_1_5, S12_3_9, C6_2_4, S12_5_7, C6_3, C2, sigma_d] 
 
-    def get_projection_operators(self):
+    def get_projection_operator_matrices(self):
         """
         get the projection operators for all irreps
         """
-        ops = self.get_mats_of_operators()
+        ops = self.get_SymmOp_matrices()
         pg = PointGroup(self.qd.point_group)
         return pg.projection_operators(ops)
 
 
 
 class SubSpace:
-    def __init__(self, qd, vecs):
+    def __init__(self, qd, basis_vecs):
         self.qd = qd
-        self.basis = vecs
+        self.basis = basis_vecs
         self.rep = self._decompose_as_irreps()
+        self._full_space = FullSpace(qd)
 
     def _decompose_as_irreps(self):
         _full_space = FullSpace(qd)
-        ops = _full_space.get_mats_of_operators()
-        ops_new = [[self.operater_mat(j) for j in i] for i in ops]
+        op_mats_full = _full_space.get_symmop_matrices()
+        ops_new = [[self.symmeop_mat_full2sub(j) for j in i] for i in op_mats_full]
         chi = [np.trace(i[0]) for i in ops_new]
         pg = PointGroup(self.qd.point_group)
         return pg.rrep2irrep(chi)
 
-    def operater_mat(self, op_mat_full):
+    def symmop_mat_full2sub(self, symmop_mat_full):
         left_vec = np.transpose(self.basis).conj()
         right_vec = np.matmul(op_mat_full, self.basis)
         op_mat_sub = np.matmul(left_vec, right_vec)
         return op_mat_sub
 
-    def get_irrep_basis(self):
+    def get_basis_irrep(self, proj_op_mats_full):
+        ind_val = 0
+        for irrep in self.rep:
+            n_time = self.rep[irrep]
+            if not n_time:
+                continue
+            if irrep[0] in ['A','B']:
+                n_basis = n_time
+            elif irrep[0] == 'E':
+                n_basis = n_time*2
+            vecs_picked = np.matmul(proj_ops[irrep], self.basis[:,ind_val:ind_val+n_basis])
+
+            vecs_orth, r = np.linalg.qr(vecs_picked)
+            vecs[:,inds[ind_val]:inds[ind_val]+n_basis] = vecs_orth
+            irrep_comps[inds[ind_val]:inds[ind_val]+n_basis] = [[irrep]]
+            ind_val = ind_val + n_basis
+        
         
 
         
@@ -194,7 +211,7 @@ def classify_eigen_states_irrep(struct_f='struct.obj', eigen_f='EIGEN.npz'):
                 ind_val = ind_val + n_basis
     deal_with_mixed_irrep()
     return _vals_vecs_irrep_group(vals, vecs,irrep_comps)
-
+`
         
     
 def _classify_eigenstates_SymmeOp_and_irrep(SymmeOp_mat, SymmeOp_vals_1D_irrep, \
@@ -596,52 +613,6 @@ def plot_HOMO_LUMO(symmeop_label='Cn1', struct_f='struct.obj', eigen_f='EIGEN.np
         plt.savefig('%s.png' % label)
         plt.close()
 
-        
-            
-            
-                 
-    
-    
-
-
-
-def check_classified_vecs_SymmeOp(SymmeOp_label='Cn1', struct_f='struct.obj', eigen_f='EIGEN.npz'):
-    vals, vecs = classify_eigenstates_with_SymmeOp_values(SymmeOp_label=SymmeOp_label, struct_f=struct_f, eigen_f=eigen_f)
-    with open(struct_f, 'rb') as f:
-        qd = pickle.load(f)
-    H = qd.get_Hamiltonian()
-    if SymmeOp_label == 'Cn1':
-        OP = get_representation_matrices(qd)[1][0]
-    elif SymmeOp_label == 'sigma_x':
-        OP = get_representation_matrices(qd)[-1][0]
-    print('%s check' % SymmeOp_label)
-    for angle in vecs:
-        print('\n\n\nangle=%s degree' % angle)
-        mu = np.exp(1j*angle*np.pi/180)
-        for irrep in vecs[angle]:
-            print('\n', irrep)
-            vecs_shot = vecs[angle][irrep]
-            vecs_new = np.matmul(OP, vecs_shot)
-            for i in range(len(vecs_shot[0])):
-                vecs_new[:,i] = vecs_new[:,i]/mu
-                print(np.round(vecs_new[:,i] - vecs_shot[:,i], 4), mu)
-                print('orth?', np.dot(vecs_shot[:,i].conj(), vecs_shot[:,i]))
-
-def check_classified_vecs_irrep(struct_f='struct.obj', eigen_f='EIGEN.npz'):
-    vals, vecs = classify_eigen_states_irrep(struct_f=struct_f, eigen_f=eigen_f)
-    with open(struct_f, 'rb') as f:
-        qd = pickle.load(f)
-    H = qd.get_Hamiltonian()
-
-    for irrep in vecs:
-        print(irrep)
-        vecs_shot = vecs[irrep]
-        vals_shot = vals[irrep]
-        vecs_new = np.matmul(H, vecs_shot)
-        for i in range(len(vals_shot)):
-            vecs_new[:,i] = vecs_new[:,i]/vals_shot[i]
-            print(np.round(vecs_new[:,i] - vecs_shot[:,i], 4).real, vals_shot[i])
-        print('\n\n')
 
 def plot_HOMO_LUMO_new(symmeop_label='Cn1', struct_f='struct.obj', eigen_f='EIGEN.npz', scale=8000):
     qd, vals, vecs = _parse(struct_f, eigen_f)

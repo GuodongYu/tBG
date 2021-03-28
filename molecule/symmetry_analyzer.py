@@ -451,10 +451,13 @@ def _plot_one_vec(fig, ax, qd, vec, title, scale=8000, lw=0.1, alpha=0.8):
     coords_i = qd.coords[ind0:ind1]
     ax.scatter(coords_i[:,0], coords_i[:,1], occp[ind0:ind1],color='black', alpha=alpha, linewidths=0, edgecolors=None)
     ### top layer ##
-    ind0 = qd.layer_nsites[0]
-    ind1 = qd.layer_nsites[0] + qd.layer_nsites[1]
-    coords_i = qd.coords[ind0:ind1]
-    ax.scatter(coords_i[:,0], coords_i[:,1], occp[ind0:ind1], color='red', alpha=alpha, linewidths=0, edgecolors=None)
+    try:
+        ind0 = qd.layer_nsites[0]
+        ind1 = qd.layer_nsites[0] + qd.layer_nsites[1]
+        coords_i = qd.coords[ind0:ind1]
+        ax.scatter(coords_i[:,0], coords_i[:,1], occp[ind0:ind1], color='red', alpha=alpha, linewidths=0, edgecolors=None)
+    except:
+        pass
     ax.set_title(title)
     ax.axis('equal')
 
@@ -486,7 +489,7 @@ def plot_eigenvectors(symmeop_label, elim=None, struct_f='struct.obj',eigen_f='E
     else:
         elim = [min(vals_expand), max(vals_expand)]
     vals, vecs = classify_eigenstates_SymmeOp_and_irrep(symmeop_label, struct_f, eigen_f)
-    def add_one_picture(ax, vec, val):
+    def add_one_picture(ax, vec, val, comment=''):
         qd.plot(fig, ax, site_size=0, lw=lw)      
         occp = np.abs(vec)**2 *4000
         ### bottom layer ##
@@ -502,11 +505,12 @@ def plot_eigenvectors(symmeop_label, elim=None, struct_f='struct.obj',eigen_f='E
             ax.scatter(coords_i[:,0], coords_i[:,1], occp[ind0:ind1], color='red', alpha=alpha, linewidths=0, edgecolors=None)
         except:
             pass
-        ax.set_title('$E-E_f$: %.2f' % (val-ef))
+        ax.set_title(comment+'\n$E-E_f$: %.2f' % (val-ef))
         ax.axis('equal')
     for angle in vecs:
         for irrep in vecs[angle]:
             print(angle, irrep)
+            title = '$%i^{\circ} %s$' % (angle, irrep)
             vecs_shot = np.array(vecs[angle][irrep])
             vals_shot = np.array(vals[angle][irrep])
             inds = np.intersect1d(np.where(vals_shot>=elim[0])[0], np.where(vals_shot<=elim[1])[0])
@@ -529,9 +533,11 @@ def plot_eigenvectors(symmeop_label, elim=None, struct_f='struct.obj',eigen_f='E
                 axes_ = axes.reshape(-1,)
             else:
                 axes_ = [axes]
-            [add_one_picture(axes_[i], vecs_shot_cut[:,i], vals_shot_cut[i]) for i in range(0,n)]
+            [add_one_picture(axes_[i], vecs_shot_cut[:,i], vals_shot_cut[i], title) for i in range(0,n)]
             for i in range(n, ncol*nrow):
                 axes_[i].axis('off')
+            #fig.suptitle(title)
+            plt.tight_layout()
             plt.savefig('angle%s_irrep%s.png' % (angle, irrep))
             plt.close()
 
@@ -624,7 +630,6 @@ def basis_band_edge(symmeop_label='Cn1', struct_f='struct.obj', eigen_f='EIGEN.n
         irreps, basis = irrep_basis(vecs_sub)
         angles, basis = eigstates_symmeop(basis)
         out[tp] = {'angle':angles, 'irrep':irreps, 'vec':basis, 'val':vals[tp]}
-    print(out)
     return out
 
 def plot_HOMO_LUMO_new(symmeop_label='Cn1', struct_f='struct.obj', eigen_f='EIGEN.npz', scale=8000):

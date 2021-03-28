@@ -360,6 +360,7 @@ class _GemetryOperate:
             inds = np.in1d(range(pmg_st.num_sites), inds_rm)
             self.coords = self.coords[~inds]
             self.layer_nsites = self.get_layer_nsites()
+            self.layer_nsites_sublatt = self.get_layer_nsites_sublatt()
             if not len(inds_rm):
                 break
 
@@ -388,14 +389,25 @@ def all_C2_axes(n):
     return np.array(axes)
 
 class _Disorder:
-    def add_vacancy(self, concentration):
+    def add_vacancy(self, concentration, indices_chosen):
         """
         return the coords after adding vacancies with concentration 
+        args:
+            concentration: vacancy concentration
+            indices_chosen: from which vacancies are induced
         """
         natom = len(self.coords)
         nvac = int(natom*concentration)
-        indices_vac = np.random.choice(natom, nvac, replace=False)
+        indices_chosen = np.array(indices_chosen)
+
+        indices_vac = np.random.choice(len(indices_chosen), nvac, replace=False)
+        indices_vac = indices_chosen[indices_vac]
+        print('n_vac: %s' % len(indices_vac))
         indices = np.setdiff1d(range(natom), indices_vac)
+        n_site_bott = self.layer_nsites[0]
+        nvac_bott = len(np.where(indices_vac<n_site_bott)[0])
+        nvac_top = len(np.where(indices_vac>=n_site_bott)[0])
+        self.layer_nsites = np.array(self.layer_nsites) - np.array([nvac_bott, nvac_top])
         self.coords = self.coords[indices]
 
 class _INIT:

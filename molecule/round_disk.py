@@ -25,8 +25,7 @@ class _MethodsHamilt:
             H[pair[0],pair[1]] =  t
             H[pair[1],pair[0]] =  np.conj(t)
         [put_value(pairs[i], ts[i]) for i in range(len(ts))]
-        if self.E:
-            np.fill_diagonal(H, self.Es_onsite)
+        np.fill_diagonal(H, self.Es_onsite)
         return H
 
     def diag_Hamiltonian(self, fname='EIGEN', vec=True):
@@ -55,6 +54,7 @@ class _MethodsHamilt:
         hbar_eVs =  6.582119514*10**(-16)
         e = 1.
         c = e/(1j*hbar_eVs)
+        c = 1 ## for Yunhua 
         ndim = len(self.coords)
         H = self.get_Hamiltonian()
         X = np.zeros([ndim, ndim])
@@ -181,21 +181,29 @@ class _MethodsHamilt:
             self.Es_onsite = self.coords[:,2]*E
 
 class _Read:
-    def from_relaxed_struct_from_file(self, filename):
+    def read_lammps_struct_xyz(self, filename):
         """
         read the xyz file for site coords. 
         don't forget to add hopping manually after reading.
         """
         with open(filename, 'r') as f:
             nl = int(f.readline())
-        data = read_last_n_lines(filename, n=nl)
-        data = np.array([[j for j in i.split()] for i in data])
-        nsite_bot = np.count_nonzero(data[:,0]=='1')
-        nsite_top = np.count_nonzero(data[:,0]=='2')
+            print(nl)
+        
+        with open(filename, 'r') as f:
+            coords = [f.readline() for i in range(nl+2)]
+            while True:
+                coords_next = [f.readline() for i in range(nl+2)]
+                if coords_next[0]:
+                    coords = coords_next
+                else:
+                    del coords_next
+                    break
+        data = np.array([i.split() for i in coords[2:]])
         self.coords = np.array(data[:,1:], dtype=float)
-        self.layer_nsites = [nsite_bot, nsite_top]
-        self.h = 3.461
-        self.a = 2.456
+        self.Es_onsite = np.zeros(len(self.coords))
+
+    
 
     def read_struct_and_hopping(self, filename):
         d = np.load(filename)
@@ -213,13 +221,13 @@ class _Output:
             f.write('Relaxed structure\n')
             f.write(coord_str)
 
-    def output_lammps_struct(self, atom_style='full'):
+    def output_lammps_struct(self, atom_style='full', fname='data.struct'):
         """
         atom_style: 'full' or 'atomic' which determine the format of the
                      atom part in data file
         atoms in different layers were given differen atom_type and molecule-tag
         """
-        from lammps import write_lammps_datafile
+        from tBG.lammps import write_lammps_datafile
         n_atom = np.sum(self.layer_nsites)
         n_atom_type = len(self.layer_zcoords)
         mass = [12.0107]*n_atom_type
@@ -235,7 +243,7 @@ class _Output:
         molecule_tag = atom_type
         q = [0.0] * n_atom
         write_lammps_datafile(box, atom_id, self.coords, n_atom, n_atom_type, mass, atom_type, atom_style=atom_style, \
-                              tilts=tilts, qs=q, molecule_tag=molecule_tag)
+                              tilts=tilts, qs=q, molecule_tag=molecule_tag, fname=fname)
 
     def save_to(self, fname='struct'):
         out={}
@@ -584,7 +592,7 @@ class RoundDisk(_MethodsHamilt, _LayeredStructMethods, _Output, _Read):
         return ids
 
 
-def round_disks_multilayer(R, thetas, overlap, a=2.46, h=3.35, rm_dangling=True):
+def round_disk_multilayer(R, thetas, overlap, a=2.46, h=3.35, rm_dangling=True):
     """
     R: the radius of the round disk
     thetas: the twist angles between closest layers
@@ -612,6 +620,94 @@ def round_disks_multilayer(R, thetas, overlap, a=2.46, h=3.35, rm_dangling=True)
         rd.layer_nsites.append(rd.layer_nsites[-1])
         rd.layer_nsites_sublatt.append(rd.layer_nsites_sublatt[-1])
     return rd
+
+
+def round_disk_monolayer(R, a=2.46, origin='hole', rm_dangling=True):
+    """
+    """
+    r = R*a
+    latt_vec = a*np.array([[np.sqrt(3)/2, -1/2],
+                            [np.sqrt(3)/2,  1/2]])
+    va_bottom = np.array([a*np.cos(30.*np.pi/180.), -a*np.sin(30.*np.pi/180.)])
+    vb_bottom = np.array([a*np.cos(30.*np.pi/180.), a*np.sin(30.*np.pi/180.)])
+    latt_vec = np.array([va_bottom, vb_bottom])
+    if origin == 'hole':
+        sites = np.array([[1./3., 1./3.],
+                             [2./3., 2./3.]])
+    elif origin == 'atom':
+        sites = np.array([[0.,       0.],
+                             [1./3., 1./3.]])
+    elif origin == 'atom1':
+        sites = np.array([[-1/3, -1/3],
+                             [0.,     0.]])
+    elif origin == 'side_center':
+        sites = np.array([[-1/6., -1/6.],
+                             [1/6.,   1/6.]])
+
+    ### coords of special points ###
+    p0 = np.array([-2*r, 0])
+    p1 = np.array([ 2*r, 0])
+    p2 = np.array([0., -2*r/np.sqrt(3)])
+    p3 = np.array([0.,  2*r/np.sqrt(3)])
+    ### coords  
+    p4 = np.array([-r/2,  np.sqrt(3)*r/2])
+    p5 = np.array([-r/2, -np.sqrt(3)*r/2])
+    p6 = np.array([ r/2,  np.sqrt(3)*r/2])
+    p7 = np.array([ r/2, -np.sqrt(3)*r/2])
+    ps = np.array([p0, p1, p2, p3, p4, p5, p6, p7])
+    ps_frac = cart2frac(ps, latt_vec)
+
+    def get_mn_limit(subsite):
+        mns = ps_frac - subsite
+        m_min = np.floor(np.min(mns))
+        m_max = np.ceil(np.max(mns))
+        return [int(m_min), int(m_max)]
+    mns = [get_mn_limit(sites[i]) for i in [0, 1]]
+
+    def get_coords(sub):
+        mn = mns[sub]
+        site = sites[sub]
+        ucs = np.array([[i,j] for i in range(mn[0], mn[1]+1) for j in range(mn[0], mn[1]+1)])
+        coords_cart = frac2cart(ucs+site, latt_vec)
+        norms = np.linalg.norm(coords_cart, axis=1)
+        ids_in = np.where(norms<=r)[0]
+        return ucs[ids_in], coords_cart[ids_in]
+
+    ucs_site0, coords_site0 = get_coords(0)
+    ucs_site1, coords_site1 = get_coords(1)
+    ucs = np.array([ucs_site0, ucs_site1])
+    coords = np.array([coords_site0, coords_site1])
+    del ucs_site0, ucs_site1, coords_site0, coords_site1
+
+    def coords_no_dangling(ucs, coords):
+        dist_edge = 2.5 * a/np.sqrt(3)
+        def get_ids_edge(sub):
+            site = sites[sub]
+            norms = np.linalg.norm(coords[sub], axis=1)
+            ids_edge = np.where(norms>=r-dist_edge)[0]
+            return ids_edge
+        ids_edge = [get_ids_edge(i) for i in [0,1]]
+
+        def get_ids_dangling(sub):
+            if sub==0:
+                delta = (latt_vec[0]+latt_vec[1])/3
+            elif sub==1:
+                delta = -(latt_vec[0]+latt_vec[1])/3
+            neighs = np.array([rotate_on_vec(theta, delta) for theta in [0, 120, 240]])
+            coords_edge = coords[sub][ids_edge[sub]]
+            coords_edge_neigh = np.array([coords_edge+i for i in neighs])
+            norms_edge_neigh = np.linalg.norm(coords_edge_neigh, axis=2)
+            n_outside = np.sum(np.array(norms_edge_neigh>r, dtype=int),axis=0)
+            ids_dangling = np.where(n_outside==2)[0]
+            return ids_edge[sub][ids_dangling]
+        ids_dangling_site0 =  get_ids_dangling(0)
+        ids_dangling_site1 =  get_ids_dangling(1)
+        return [np.delete(coords[i], get_ids_dangling(i), axis=0) for i in [0,1]]
+
+    if rm_dangling:
+        return coords_no_dangling(ucs, coords), latt_vec
+    else:
+        return coords, latt_vec
 
     
     

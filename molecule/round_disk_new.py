@@ -5,13 +5,115 @@ from tBG.hopping import divide_sites_2D, calc_hoppings
 from tBG.utils import *
 from tBG.crystal.structures import _LayeredStructMethods
 from tBG.hopping import grouper
+import copy
 
+def coords_to_strlist(coords, prec=3):
+    """
+    A function to convert the coordinates array to string array
+    it is fast to deal with coordinates as string
+    
+    coords: site coordinates
+    prec: 3 is perfect, larger prec may works wrong
+    """
+    coords = np.round(coords, prec)
+    coords[coords==0.] = 0. 
+    string = ['~'.join([str(x) for x in i]) for i in coords]
+    return string
 
-## functions for prinstine monolayer graphene round disk ##
-## construct structure func: _round_disk_monolayer
-## 
+### functions for edge carbon atoms ###
+
+def get_edge_sites_indices(coords, latt_vec, idx_from, nneigh=2):
+    """
+        A function for getting the indices of all edge carbon atoms
+
+    coords=[coords_a, coords_b]: the coordinates of sublattice a and b in the same layer
+    latt_vec: the lattice vector of this graphene layer
+    idx_from: the index of the first atom in coords_a
+    nneigh: the neighbor number. 1 and 2 for edge sites having only 1 and 2 nearest neighbors.
+    """
+    n_site_a = len(coords[0])
+    n_site_b = len(coords[1])
+    coords_new = copy.deepcopy(coords)
+    pairs = get_neigh_pairs_in_graphene_OBC(1, coords_new, latt_vec, idx_from=idx_from)[0]
+    pairs = np.sort(pairs, axis=0)
+    def get_n_neigh_suba(i):
+        return len(np.where(pairs[:,0]==i+idx_from)[0])
+    def get_n_neigh_subb(i):
+        return len(np.where(pairs[:,1]==i+idx_from+n_site_a)[0])
+    neighs_a = np.array([get_n_neigh_suba(i) for i in range(n_site_a)])
+    neighs_b = np.array([get_n_neigh_subb(i) for i in range(n_site_b)])
+    ids_sublatt_a = np.where(neighs_a==nneigh)[0]+idx_from
+    ids_sublatt_b = np.where(neighs_b==nneigh)[0]+idx_from+n_site_a
+    return ids_sublatt_a, ids_sublatt_b
+
+def get_hydrogen_coords_for_saturation(qd, bond=1.0):
+    """
+    get the hydrogen coordinates for saturating the edge atoms
+    """
+    ids = qd._layer_inds_sublatt()
+    coords_H = []
+    for layer_i in range(len(qd.layer_nsites)):
+        latt_vec = qd.layer_latt_vecs[layer_i]
+        id_a, id_b = ids[layer_i]
+        coords_layeri_a = qd.coords[id_a[0]:id_a[1]+1]
+        coords_layeri_b = qd.coords[id_b[0]:id_b[1]+1]
+        coords_H_layeri = _hydrogen_coords_for_edge_saturation([coords_layeri_a, coords_layeri_b], latt_vec,bond=bond)
+        coords_H.append(np.concatenate(coords_H_layeri, axis=0))
+    return coords_H
+
+def _hydrogen_coords_for_edge_saturation(coords, latt_vec, bond=1.0):
+    """
+    A function to obtain coordinates of hydrogen atoms, which saturate all edge carbon atoms 
+   
+    coords= [coords_a, coords_b], the coordinates of sublattice A and B for single layer grpahene
+    latt_vec: the lattice vector 
+    bond: the bond length in angstrom between edge carbon and added hydrogen atoms
+    return 
+      [coords_H_a, coords_H_b] the hydrogen coordinates saturating edge atoms at A and B sublattices
+    """
+    coords_str  = [coords_to_strlist(coords[i]) for i in [0, 1]]
+    ids_a, ids_b = get_edge_sites_indices(coords, latt_vec, 0, nneigh=2)
+    edge_coords = [coords[0][ids_a], coords[1][ids_b-len(coords[0])]]
+    vecs_sublatt_to_neigh = [sublatt_to_neigh_vecs(i, 1, latt_vec) for i in [0,1]]
+    vecs_sublatt_to_neigh = [np.append(vecs_sublatt_to_neigh[i], [[0],[0],[0]], axis=1) for i in [0,1]]
+    def get_edge_neigh_coords(sublatt):
+        edge_carbon_neigh_coords_sub = \
+              np.array([edge_coords[sublatt] + vecs_sublatt_to_neigh[sublatt][i] for i in [0,1,2]])
+        return edge_carbon_neigh_coords_sub
+    edge_neigh_coords = [get_edge_neigh_coords(i) for i in [0,1]]
+
+    def get_edge_neigh_coords_str(sublatt):
+        neigh_coords_sublatt = edge_neigh_coords[sublatt]
+        return np.array([coords_to_strlist(neigh_coords_sublatt[i]) for i in [0,1,2]])
+    edge_neigh_coords_str = [get_edge_neigh_coords_str(sublatt) for sublatt in [0,1]]
+
+    def get_sublatt_hydrogen_coords(sublatt):
+        edge_neigh_coords_str_sublatt = edge_neigh_coords_str[sublatt]
+        coords_str_ano = coords_str[1-sublatt]
+        neigh_exist = np.array([[j in coords_str_ano for j in edge_neigh_coords_str_sublatt[i]] for i in [0,1,2]])
+        ids = np.where(neigh_exist==False)
+        neighs_coords = edge_neigh_coords[sublatt][ids]
+        origs = edge_coords[sublatt][ids[1]]
+        vecs_to_H = neighs_coords-origs
+        norms = np.linalg.norm(vecs_to_H, axis=1)
+        coords_H = origs + bond*np.array([vecs_to_H[i]/norms[i] for i in range(len(norms))])
+        return coords_H
+    hydrogen_coords = [get_sublatt_hydrogen_coords(i) for i in [0,1]]
+    return hydrogen_coords
+
+## functions for prinstine monolayer graphene quantum dot ##
 def _round_disk_monolayer(R, a=2.46, origin='hole', rm_dangling=True):
     """
+    A function to generate a graphene round disk using the fast way
+
+    R: round disk radius in units of a
+    a: lattice constant of graphene
+    origin: origin point place, hole, atom, atom1 and side_center 
+            hole: hexgon center
+            atom: first atom in unit cell
+            atom1: second atom in unit cell
+            side_center: C-C bond center
+    rm_damgling: whether to delete the edge sites with two dangling bonds
     """
     r = R*a
     latt_vec = a*np.array([[np.sqrt(3)/2, -1/2],
@@ -95,14 +197,14 @@ def _round_disk_monolayer(R, a=2.46, origin='hole', rm_dangling=True):
         return [np.delete(coords[i], get_ids_dangling(i), axis=0) for i in [0,1]]
 
     if rm_dangling:
-        return coords_no_dangling(ucs, coords), latt_vec
+        return coords_no_dangling(ucs, coords), latt_vec, sites
     else:
-        return coords, latt_vec
+        return coords, latt_vec, sites
 
-### functions to find intralayer neighbors #########################
+##### functions to find neighbors within same layer  ##############
 def sublatt_to_neigh_vecs(sublatt, nth, latt_vec):
     """
-    get the vectors shifting sublatt to its nth neighbors
+    A function to get the vectors shifting sublatt to its nth neighbors
     args:
         sublatt: the sublatt 
         nth: the nth nearest neighbor
@@ -156,9 +258,6 @@ def sublatt_to_neigh_vecs(sublatt, nth, latt_vec):
         elif tp == 'AB':
             return -np.array(vecs)
 
-def coords_to_strlist(coords):
-    string = ['~'.join([str(x) for x in i]) for i in coords]
-    return string
 
 def _neigh_pairs_inter_sublatts(coords, neigh_vecs, idx_from=0):
     """
@@ -173,15 +272,7 @@ def _neigh_pairs_inter_sublatts(coords, neigh_vecs, idx_from=0):
     n_atomA = len(pnts_A)
     pnts_A_neigh = np.array([pnts_A + neigh_vecs[i] for i in range(n_neigh)])
 
-    ## handling for string match
-    pnts_A_neigh = np.round(pnts_A_neigh, 3)
-    pnts_A = np.round(pnts_A, 3)
-    pnts_B = np.round(pnts_B, 3)
-    pnts_A_neigh[pnts_A_neigh==0.0] = 0.0
-    pnts_A[pnts_A==0.0] = 0.0
-    pnts_B[pnts_B==0.0] = 0.0
-
-    ## conver coords to string list
+    ## convert coords to string list
     pnts_A_neigh_str = np.array([coords_to_strlist(pnts_A_neigh[i]) for i in range(n_neigh)])
     pnts_B_str = coords_to_strlist(pnts_B)
     ind_B_str = dict(zip(pnts_B_str, range(len(pnts_B_str))))
@@ -201,7 +292,7 @@ def _neigh_pairs_inter_sublatts(coords, neigh_vecs, idx_from=0):
 def _neigh_pairs_intra_sublatts(pnts, neigh_vecs, idx_from=0):
     """
     *** get intra-sublattice neighbor pairs (within sublatt A or B) in a graphene ***
-    coords: coords of one sublattice
+    pnts: coords of one sublattice
     neigh_vecs: all vectors move sublatt A to B
     idx_from: a given index for the first atom in coords_A
        **sometimes the coordinates given is just part of the system, such as sublatt B or multilayer
@@ -211,13 +302,7 @@ def _neigh_pairs_intra_sublatts(pnts, neigh_vecs, idx_from=0):
     n_neigh = len(neigh_vecs)
     pnts_neigh = np.array([pnts + neigh_vecs[i] for i in range(n_neigh)])
 
-    ## handling for string match
-    pnts_neigh = np.round(pnts_neigh, 3)
-    pnts = np.round(pnts, 3)
-    pnts_neigh[pnts_neigh==0.0] = 0.0
-    pnts[pnts==0.0] = 0.0
-
-    ## conver coords to string list
+    ## convert coords to string list
     pnts_neigh_str = np.array([coords_to_strlist(pnts_neigh[i]) for i in range(n_neigh)])
     pnts_str = coords_to_strlist(pnts)
     ind_str = dict(zip(pnts_str, range(len(pnts_str))))
@@ -238,7 +323,7 @@ def _neigh_pairs_intra_sublatts(pnts, neigh_vecs, idx_from=0):
 def get_neigh_pairs_in_graphene_OBC(nth, coords, latt_vec, idx_from=0):
     """
     args:
-        nth: the nth nearested neighbors are considered
+        nth: the 1st-nth nearested neighbors are considered
         coords: [coords_sublatt_a, coords_sublatt_b] 
         latt_vec: lattice vector 
         idx_from: the index of the 1st site in coords_sublatt_a, used for multilayer
@@ -269,7 +354,7 @@ def get_neigh_pairs_in_graphene_OBC(nth, coords, latt_vec, idx_from=0):
 def get_neigh_pairs_in_graphene_OBC_in_parellel(nth, coords, latt_vec, idx_from=0, n_proc=1):
     """
     args:
-        nth: the nth nearested neighbors are considered
+        nth: from 1st to nth nearested neighbors are considered
         coords: [coords_sublatt_a, coords_sublatt_b] 
         latt_vec: lattice vector 
         idx_from: the index of the first site in coords_sublatt_a, used for multilayer
@@ -371,13 +456,15 @@ class _MethodsHamilt:
         else:
             np.savez_compressed(fname, vals=vals)
 
-    def get_current_mat(self):
+    def get_current_mat(self, Yunhua=True):
         """
         the matrix of current operator, in units of e*angstrom/second
         """
         hbar_eVs =  6.582119514*10**(-16)
         e = 1.
         c = e/(1j*hbar_eVs)
+        if Yunhua:
+            c = 1.0
         ndim = len(self.coords)
         H = self.get_Hamiltonian()
         X = np.zeros([ndim, ndim])
@@ -520,8 +607,6 @@ class _MethodsHamilt:
                     hops = np.concatenate([hops, hop], axis=0)
         self.hopping = pairs, hops
 
-
-
     def set_magnetic_field(self, B=0):
         """
         field is along the z aixs
@@ -543,66 +628,15 @@ class _MethodsHamilt:
         """
         field is along the z aixs
         """
-        if E:
-            self.E = E
-            self.Es_onsite = self.coords[:,2]*E
+        self.Es_onsite = self.coords[:,2]*E
 
-class _Read:
-    def from_relaxed_struct_from_file(self, filename):
-        """
-        read the xyz file for site coords. 
-        don't forget to add hopping manually after reading.
-        """
-        with open(filename, 'r') as f:
-            nl = int(f.readline())
-        data = read_last_n_lines(filename, n=nl)
-        data = np.array([[j for j in i.split()] for i in data])
-        nsite_bot = np.count_nonzero(data[:,0]=='1')
-        nsite_top = np.count_nonzero(data[:,0]=='2')
-        self.coords = np.array(data[:,1:], dtype=float)
-        self.layer_nsites = [nsite_bot, nsite_top]
-        self.h = 3.461
-        self.a = 2.456
 
+
+class _IO:
     def read_struct_and_hopping(self, filename):
         d = np.load(filename)
         self.coords = d['coords']
         self.hopping = (d['hop_keys'], d['hop_vals'])
-
-class _Output:
-    def output_xyz_struct(self):
-        atom_type = np.concatenate(tuple((np.repeat([i+1],self.layer_nsites[i]) for i in range(len(self.layer_nsites)))))
-        coord_str = np.append(np.array([atom_type], dtype=str), self.coords.T, axis=0).T
-        #coord_str = np.array(coord, ntype=str)
-        coord_str = '\n'.join([' '.join(i) for i in coord_str])
-        with open('struct_relaxed.xyz', 'w') as f:
-            f.write('%s\n' % len(self.coords))
-            f.write('Relaxed structure\n')
-            f.write(coord_str)
-
-    def output_lammps_struct(self, atom_style='full'):
-        """
-        atom_style: 'full' or 'atomic' which determine the format of the
-                     atom part in data file
-        atoms in different layers were given differen atom_type and molecule-tag
-        """
-        from lammps import write_lammps_datafile
-        n_atom = np.sum(self.layer_nsites)
-        n_atom_type = len(self.layer_zcoords)
-        mass = [12.0107]*n_atom_type
-
-        a = [min(self.coords[:,0])-100, max(self.coords[:,0])+100]
-        b = [min(self.coords[:,1])-100, max(self.coords[:,1])+100]
-        c = [min(self.coords[:,2])-100, max(self.coords[:,2])+100]
-        box = [a, b, c]
-        tilts = [0, 0, 0]
-
-        atom_id = range(1, n_atom+1)
-        atom_type = np.concatenate([[i]*self.layer_nsites[i-1] for i in range(1, n_atom_type+1)])
-        molecule_tag = atom_type
-        q = [0.0] * n_atom
-        write_lammps_datafile(box, atom_id, self.coords, n_atom, n_atom_type, mass, atom_type, atom_style=atom_style, \
-                              tilts=tilts, qs=q, molecule_tag=molecule_tag)
 
     def save_to(self, fname='struct'):
         out={}
@@ -630,10 +664,10 @@ class _Output:
         plt.savefig(fname+'.pdf')
         plt.clf()
 
-    def plot(self, fig, ax ,site_size=3.0, dpi=600, lw=0.6, edge_cut=False):
+    def plot(self, fig, ax ,site_size=3.0, dpi=600, lw=0.6):
         import matplotlib.collections as mc
         nsites = len(self.coords)
-        cs = {'A':'black', 'Atld':'red', 'B':'grey', 'Btld':'orange'}
+        cs = ['black', 'red', 'grey', 'orange', 'blue', 'green', 'yellow']
         layer_inds = self._layer_inds()
         layer_hops = [[] for _ in range(len(self.layer_nsites))]
         for pair, hop in zip(self.hopping[0], self.hopping[1]):
@@ -642,28 +676,18 @@ class _Output:
                 ind0,ind1 = layer_inds[k]
                 if ind0<=i<=ind1 and ind0<=j<=ind1:
                     layer_hops[k].append([self.coords[i][:2],self.coords[j][:2]])
-        for i in np.array(self.layer_zcoords).argsort():
-            layer_type = self.layer_types[i]
-            ind0,ind1 = layer_inds[i]
-            line = mc.LineCollection(layer_hops[i], [0.1]*len(layer_hops[i]),colors=cs[layer_type], lw=lw)
+        for i in range(len(layer_inds)):
+            ind0,ind1 = layer_inds[k]
+            line = mc.LineCollection(layer_hops[i], [0.1]*len(layer_hops[i]),colors=cs[i], lw=lw)
             fig.canvas.draw()
             renderer = fig.canvas.renderer
             ax.add_collection(line)
             ax.draw(renderer)
             ax.scatter(self.coords[:,0][ind0:ind1+1], self.coords[:,1][ind0:ind1+1], \
-                        s=site_size, color=cs[layer_type],linewidth=0)
-        #if not edge_cut:
-        #    for i in self.site_ids_edge:
-        #        ax.scatter(self.coords[:,0][self.site_ids_edge[i][0]:self.site_ids_edge[i][1]+1],\
-        #                    self.coords[:,1][self.site_ids_edge[i][0]:self.site_ids_edge[i][1]+1],\
-        #                    s = site_size+50, color='purple', marker='*', linewidth=0)
-        #else:
-        #    edge_site_ids = self.edge_site_ids_by_distance(edge_cut)
-        #    ax.scatter(self.coords[:,0][edge_site_ids], self.coords[:,1][edge_site_ids],\
-        #                    s = site_size+50, color='purple', marker='*', linewidth=0)
+                        s=site_size, color=cs[i],linewidth=0)
         ax.set_aspect('equal')
 
-class RoundDisk(_MethodsHamilt, _LayeredStructMethods, _Output, _Read):
+class RoundDisk(_MethodsHamilt, _LayeredStructMethods, _IO):
     """
     A class for constructing graphene round disk quantum dots, including monolayer, bilayer and multilayer.
     The lattice vector [vec_0, vec1]: the one with 60 degree angle between vec_0 and vec_1 is always chosen.
@@ -679,16 +703,18 @@ class RoundDisk(_MethodsHamilt, _LayeredStructMethods, _Output, _Read):
             distance: Angstrom
             rotation_angle: degree
         """
-        coords, latt_vec = _round_disk_monolayer(R, a=a, origin=origin, rm_dangling=rm_dangling)
-        n_atom_a = len(coords[0])
-        n_atom_b = len(coords[1])
-        self.layer_latt_vecs = [latt_vec]
-        self.layer_nsites_sublatt = [[n_atom_a, n_atom_b]]
-        self.layer_nsites = [ n_atom_a+n_atom_b ]
-        self.layer_origins = [origin]
-        self.coords = np.concatenate(coords, axis=0)
-        self.coords = np.append(self.coords, [[0]]*(n_atom_a+n_atom_b), axis=1)
-        self.Es_onsite = np.zeros(len(self.coords))
+        #coords, latt_vec, fracs_sublatt = _round_disk_monolayer(R, a=a, origin=origin, rm_dangling=rm_dangling)
+        #n_atom_a = len(coords[0])
+        #n_atom_b = len(coords[1])
+        #self.layer_latt_vecs = [latt_vec]
+        #self.layer_nsites_sublatt = [[n_atom_a, n_atom_b]]
+        #self.layer_nsites = [ n_atom_a+n_atom_b ]
+        #self.layer_origins = [origin]
+        #self.layer_fracs_sublatt = [fracs_sublatt]
+        #self.coords = np.concatenate(coords, axis=0)
+        #self.coords = np.append(self.coords, [[0]]*(n_atom_a+n_atom_b), axis=1)
+        #self.Es_onsite = np.zeros(len(self.coords))
+        self.twisted_multilayer(R, a=a, orientations=[orientation], origins=[origin], h=3.35, rm_dangling=rm_dangling)
 
     def twisted_bilayer(self, R, rotation_angle=30, h=3.35, a=2.46, overlap='hole', rm_dangling=True):
         """
@@ -705,15 +731,17 @@ class RoundDisk(_MethodsHamilt, _LayeredStructMethods, _Output, _Read):
             distance: Angstrom
             rotation_angle: degree
         """
-        self.monolayer(R, a=a, origin=overlap, rm_dangling=rm_dangling)
-        n_site = self.layer_nsites[0]
-        self.layer_latt_vecs.append(rotate_on_vec(rotation_angle, self.layer_latt_vecs[0]))
-        self.layer_nsites.append(n_site)
-        self.layer_nsites_sublatt.append(self.layer_nsites_sublatt[0])
-        self.layer_origins = [overlap]*2
-        coords_second = np.append(rotate_on_vec(rotation_angle, self.coords[:,0:2]), [[h]]*n_site, axis=1)
-        self.coords = np.append(self.coords, coords_second, axis=0)
-        self.Es_onsite = np.zeros(len(self.coords))
+        #self.monolayer(R, a=a, origin=overlap, rm_dangling=rm_dangling)
+        #n_site = self.layer_nsites[0]
+        #self.layer_latt_vecs.append(rotate_on_vec(rotation_angle, self.layer_latt_vecs[0]))
+        #self.layer_nsites.append(n_site)
+        #self.layer_nsites_sublatt.append(self.layer_nsites_sublatt[0])
+        #self.layer_fracs_sublatt.append(self.layer_fracs_sublatt[0])
+        #self.layer_origins = [overlap]*2
+        #coords_second = np.append(rotate_on_vec(rotation_angle, self.coords[:,0:2]), [[h]]*n_site, axis=1)
+        #self.coords = np.append(self.coords, coords_second, axis=0)
+        #self.Es_onsite = np.zeros(len(self.coords))
+        self.twisted_multilayer(R, a=a, orientations=[0, rotation_angle], origins=[overlap,overlap], h=h, rm_dangling=rm_dangling)
 
     def twisted_multilayer(self, R, a=2.46, orientations=[0, 30], origins=['hole','hole'], h=3.35, rm_dangling=True):
         """
@@ -731,12 +759,14 @@ class RoundDisk(_MethodsHamilt, _LayeredStructMethods, _Output, _Read):
             if i not in ['hole', 'atom', 'atom1', 'side_center']:
                 raise ValueError("origin must be in ['hole', 'atom', 'atom1', 'side_center']")
         #########################################################
-
+        self.a = a
+        self.h = h
         n_layer = len(orientations)
         self.layer_origins = origins
         self.layer_nsites = []
         self.layer_nsites_sublatt = []
         self.layer_latt_vecs = []
+        self.layer_fracs_sublatt = []
         
         coords_all = []
         layers_done = {}
@@ -756,10 +786,11 @@ class RoundDisk(_MethodsHamilt, _LayeredStructMethods, _Output, _Read):
                 self.layer_nsites.append(self.layer_nsites[ith_layer])
                 self.layer_nsites_sublatt.append(self.layer_nsites_sublatt[ith_layer])
                 self.layer_latt_vecs.append(latt_vec_new)
+                self.layer_fracs_sublatt.append(self.layer_fracs_sublatt[ith_layer])
                 coords_all.append(coords_new) 
             else:
                 layers_done[origin]=i
-                coords, latt_vec = _round_disk_monolayer(R, a=a, origin=origin, rm_dangling=rm_dangling)
+                coords, latt_vec, fracs_sublatt = _round_disk_monolayer(R, a=a, origin=origin, rm_dangling=rm_dangling)
                 n_site_a = len(coords[0])
                 n_site_b = len(coords[1])
                 n_site = n_site_a + n_site_b
@@ -772,6 +803,7 @@ class RoundDisk(_MethodsHamilt, _LayeredStructMethods, _Output, _Read):
                 self.layer_nsites.append(n_site)
                 self.layer_nsites_sublatt.append([n_site_a, n_site_b])
                 self.layer_latt_vecs.append(latt_vec)
+                self.layer_fracs_sublatt.append(fracs_sublatt)
         z_coords = np.concatenate([[h*i]*self.layer_nsites[i] for i in range(n_layer)])
         self.coords = np.append(np.concatenate(coords_all), z_coords.reshape(-1,1), axis=1)
         self.Es_onsite = np.zeros(len(self.coords))

@@ -116,6 +116,30 @@ class C6v(SharedMethods):
             SymmeOp = 'C6_1'
         return irrep_filter, SymmeOp_filter, SymmeOp
 
+class C6v_D(SharedMethods):
+    """
+    double group of C6v
+    """
+    def __init__(self):
+        self.nfold = 6
+        self.group_elems = ['E', 'E_bar', 'C6_1', 'C6_5_bar', 'C6_5', 'C6_1_bar', 'C6_2', 'C6_4_bar','C6_4','C6_2_bar', 'C6_3', 'C6_3_bar', \
+                            'sigma_v_1', 'sigma_v_1_bar', 'sigma_v_2', 'sigma_v_2_bar', 'sigma_v_3', 'sigma_v_3_bar', \
+                            'sigma_d_1', 'sigma_d_1_bar', 'sigma_d_2', 'sigma_d_2_bar', 'sigma_d_3', 'sigma_d_3_bar']
+        self.g = len(self.group_elems)
+        self.classes = [['E'], ['E_bar'], ['C6_1', 'C6_5_bar'], ['C6_5', 'C6_1_bar'], \
+                        ['C6_2', 'C6_4_bar'], ['C6_4','C6_2_bar'], ['C6_3', 'C6_3_bar'], \
+                        ['sigma_v_1', 'sigma_v_1_bar', 'sigma_v_2', 'sigma_v_2_bar', 'sigma_v_3', 'sigma_v_3_bar'],\
+                        ['sigma_d_1', 'sigma_d_1_bar', 'sigma_d_2', 'sigma_d_2_bar', 'sigma_d_3', 'sigma_d_3_bar']]
+                                  #   E   Ebar   C61          C65       C62 C64  C63 sigv sigd
+        self.irreps = {'A1':  np.array([1,  1,     1,          1,        1,  1,   1,  1,  1]), 
+                       'A2':  np.array([1,  1,     1,          1,        1,  1,   1, -1  -1]), 
+                       'B1':  np.array([1,  1     -1,         -1,        1,  1,  -1,  1, -1]),
+                       'B2':  np.array([1,  1,    -1,         -1,        1,  1,  -1, -1,  1]),
+                       'E1':  np.array([2,  2,     1,          1,       -1, -1,  -2,  0,  0]),
+                       'E2':  np.array([2,  2,    -1,         -1,       -1, -1,   2,  0,  0]),
+                       'E1/2':np.array([2, -2, np.sqrt(3), -np.sqrt(3),  1, -1,   0,  0,  0]),
+                       'E3/2':np.array([2, -2,     0,          0,       -2,  2,   0,  0,  0]),
+                       'E5/2':np.array([2, -2, -np.sqrt(3), np.sqrt(3),  1, -1,   0,  0,  0])}
 class D6d(SharedMethods):
     def __init__(self):
         self.nfold = 6

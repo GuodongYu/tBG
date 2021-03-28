@@ -9,9 +9,9 @@ def twisted_angle(m, n):
 
 
 def main():
-    theta_cut = [0, 2]
-    size_max = 20000
-    Nmax = 300
+    theta_cut = [4.8, 5.1]
+    size_max = 50000
+    Nmax = 800
     
     
     mns = []

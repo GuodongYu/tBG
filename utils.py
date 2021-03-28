@@ -6,11 +6,14 @@ import itertools
 def frac2cart(frac, latt_vec):
     return np.matmul(frac, latt_vec)
 
+#def cart2frac(cart, latt_vec):
+#    mat = np.transpose(np.array(latt_vec))
+#    cart_ = np.transpose(np.array(cart))
+#    frac = np.linalg.solve(mat, cart_)
+#    return np.transpose(frac)
+
 def cart2frac(cart, latt_vec):
-    mat = np.transpose(np.array(latt_vec))
-    cart_ = np.transpose(np.array(cart))
-    frac = np.linalg.solve(mat, cart_)
-    return np.transpose(frac)
+    return np.matmul(cart, np.linalg.inv(latt_vec))
 
 def rotate_operator(theta, dim=2):
     """
@@ -34,6 +37,27 @@ def rotate_on_vec(theta, vec):
     elif len(vec.shape)==2: ## vector list
         mat = rotate_operator(theta, dim=vec.shape[1])
         return np.matmul(mat, np.array(vec).T).T
+
+def rotate_a_line(theta, line):
+    prec = 1.e-10
+    a, b, c = line
+    if abs(a)<=prec:
+        p0 = [1, -c/b]
+        p1 = [2, -c/b]
+    else:
+        p0 = [-c/a, 0]
+        p1 = [-(b+c)/a, 1]
+    p0_new = rotate_on_vec(theta, p0)
+    p1_new = rotate_on_vec(theta, p1)
+    if abs(p0_new[0]-p1_new[0])<=prec:
+        x = p0_new[0]
+        a_new, b_new, c_new = 1, 0, -x
+    else:
+        k = (p1_new[1]-p0_new[1])/(p1_new[0]-p0_new[0])
+        b = p1_new[1] - k*p1_new[0]
+        a_new, b_new, c_new = k, -1, b
+    return [a_new, b_new, c_new]
+
 
 def angle_between_vec_x(vec):
     """
